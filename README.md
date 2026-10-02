@@ -11,6 +11,10 @@ npm run build      # 내 관리 화면에 붙일 번들 생성 → dist/
 npm run check      # 테스트 + 빌드
 ```
 
+## 가장 쉬운 사용법: 파일 하나 (`dist/review.html`)
+`dist/review.html` **한 파일만** 받아서 더블클릭하면 브라우저에서 바로 열립니다(약 2MB, 인터넷·서버 불필요).
+메신저·메일·공유 폴더로 나눠 줘도 됩니다. 기준값(노임단가 등)은 각자 브라우저에 저장됩니다.
+
 ## 여러 사람이 같이 쓰려면 (배포)
 `npm run build` 로 만들어지는 **`dist/` 폴더 하나**가 배포 단위입니다(저장소에도 커밋돼 있음).
 이 폴더를 사내 웹 서버/정적 호스팅(IIS, Nginx, GitHub Pages, S3 등)에 올리고 `index.html` 주소를 공유하면 됩니다.
@@ -82,8 +86,8 @@ JSON 으로 내보내기/가져오기 할 수 있습니다. **수시수동은 �
 ```
 src/core/   hyundai.js(현대 견적) unitprice.js(계룡·한화) result-pdf.js(결과서 PDF) rules-result.js(결과서 엑셀·조합 비교)
             util.js config.js read.js pdf-lines.js index.js(runReview)
-web/        widget.js(임베드 위젯) widget-style.js index.html(단독 페이지) embed-example.html pdf-text.js vendor/(SheetJS, pdf.js)
-dist/       npm run build 결과 — quotation-review.js + vendor/
+web/        widget.js(임베드 위젯) standalone-entry.js xlsx-browser.js widget-style.js index.html(단독 페이지) embed-example.html pdf-text.js vendor/(SheetJS, pdf.js)
+dist/       npm run build 결과 — review.html(파일 하나) / index.html + quotation-review.js + vendor/(서버용)
 test/       합성 데이터 테스트 (실제 고객 파일은 저장소에 넣지 않았습니다)
 ```
 기준값(노임단가·계수·유해인자 별칭·분석방법 별칭)은 화면의 **설정** 탭 JSON 에서 바꿀 수 있습니다.

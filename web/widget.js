@@ -28,7 +28,8 @@ const GROUPS = [['estimate', '견적서 검토'], ['submission', '사업장 제�
 const SEV = { error: '오류', warn: '주의', info: '참고' };
 const ORDER = { error: 0, warn: 1, info: 2 };
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-const defaultBase = () => new URL('./', import.meta.url).href;
+// 번들 형태에 따라 import.meta.url 이 없을 수 있어 실패하면 현재 페이지 기준으로 한다
+const defaultBase = () => { try { return new URL('./', import.meta.url).href; } catch { return location.href.replace(/[^/]*$/, ''); } };
 
 // ── 외부 라이브러리 지연 로드 (SheetJS / pdf.js)
 const loaded = new Map();
@@ -42,7 +43,7 @@ async function ensureXlsx(base) {
 }
 async function ensurePdf(base) {
   if (!globalThis.pdfjsLib) await loadScript(base + 'vendor/pdf.min.js');
-  globalThis.pdfjsLib.GlobalWorkerOptions.workerSrc = base + 'vendor/pdf.worker.min.js';
+  if (!globalThis.pdfjsLib.GlobalWorkerOptions.workerSrc) globalThis.pdfjsLib.GlobalWorkerOptions.workerSrc = base + 'vendor/pdf.worker.min.js';
 }
 function injectStyle() {
   if (document.getElementById('qr-style')) return;
