@@ -8,7 +8,7 @@ const fin = (ws, maxA) => { ws['!ref'] = `A1:${maxA}`; return ws; };
 export function hyundaiWb({
   period = '정기', mode = '자동', factor = period === '정기' ? 0.8 : 0.55,
   wage = period === '정기' ? [347410, 311177, 260926, 234568] : [260926, 234568, 260926, 234568],
-  plan = [], mat = [], laborMeasure = { 소음노출량계: 0 }, laborAnalysis = {}, persons = 0, hardcodeGap = false, matTotalOverride,
+  plan = [], mat = [], laborMeasure = { 소음노출량계: 0 }, laborAnalysis = {}, persons = 0, hardcodeGap = false, matTotalOverride, manual = null, nego = 0, negoAfter = false,
 } = {}) {
   const wb = XLSX.utils.book_new();
   const add = (n, ws) => XLSX.utils.book_append_sheet(wb, ws, n);
@@ -18,9 +18,11 @@ export function hyundaiWb({
   put(g, 'C2', `2026년 작업환경측정 ${period} 견적서`);
   put(g, 'A16', '직접인건비'); put(g, 'K16', labor, hardcodeGap ? null : `'${L}'!AY63`);
   put(g, 'A17', '직접경비'); put(g, 'K17', Math.round(direct), hardcodeGap ? null : `'${D}'!U19`);
-  put(g, 'A18', '조정금액(NEGO)'); put(g, 'K18', 0);
+  put(g, 'A18', '조정금액(NEGO)'); put(g, 'K18', nego);
   put(g, 'A19', '견 적 금 액');
-  put(g, 'AA19', Math.floor(((labor + Math.round(direct)) * factor) / 100) * 100, `ROUNDDOWN((K16+K17-K18)*${factor},-2)`);
+  const sum = labor + Math.round(direct);
+  if (negoAfter) put(g, 'AA19', Math.floor((sum * factor) / 100) * 100 - nego, `ROUNDDOWN((K16+K17)*${factor},-2)-K18`);
+  else put(g, 'AA19', Math.floor(((sum - nego) * factor) / 100) * 100, `ROUNDDOWN((K16+K17-K18)*${factor},-2)`);
   add(G, fin(g, 'AS77'));
 
   const l = {}; put(l, 'A7', '측정 대상 인원(인)'); put(l, 'L7', persons, `SUM('${P}'!F8:F1000)`);
@@ -45,7 +47,11 @@ export function hyundaiWb({
   const hdr = ['구분', '측정대상 유해인자', '측정방법', '근로자수(명)', '측정건수(건)', '측정인원수(명)'];
   hdr.forEach((h, i) => put(p, XLSX.utils.encode_cell({ r: 6, c: i }), h));
   plan.forEach((row, i) => row.forEach((v, c) => { if (v != null) put(p, XLSX.utils.encode_cell({ r: 7 + i, c }), v); }));
-  add(P, fin(p, 'I1000'));
+  if (manual) {
+    ['구분', '유해인자 입력', '종류선택(매체/분석기기 포함)', '측정방법', '근로자수(명)', '측정건수(건)', '측정인원수(명)'].forEach((h, i) => put(p, XLSX.utils.encode_cell({ r: 6, c: 7 + i }), h));
+    manual.forEach((row, i) => row.forEach((v, c) => { if (v != null) put(p, XLSX.utils.encode_cell({ r: 7 + i, c: 7 + c }), v); }));
+  }
+  add(P, fin(p, 'O1000'));
   add(mode === '자동' ? '소음제외 붙여넣기(컨트롤+A)' : '_연동헬퍼', fin({}, 'A1'));
   return wb;
 }

@@ -70,3 +70,32 @@ test('사업장 제출용 엑셀 ↔ 견적 대조 (재료비 칸에 직접경�
   const r = runReview({ company: 'hyundai', estimateWb: est, submissionWb: sub });
   assert.match(errs(r.submission).join('\n'), /재료비 999,999 ≠ 견적서 재료비 합계/);
 });
+
+test('수동 갑지: NEGO 를 계수 적용 뒤에 차감하는 산식도 재계산 일치', () => {
+  const f = run({ ...good(), period: '정기', mode: '수동', nego: 200, negoAfter: true });
+  assert.deepEqual(errs(f), []);
+  assert.ok(f.some((x) => x.category === 'NEGO' && /200원/.test(x.message)));
+});
+
+test('수동: 직접입력 블록(H~N) ↔ 계획서(A~F) 불일치와 다성분 기준 위반', () => {
+  const o = good();
+  o.mode = '수동';
+  // 직접입력: 톨루엔 건수 3 (계획서는 2), 아세톤 대신 자일렌 입력, 두 인자를 한 시료로 묶었는데 매체가 다름
+  o.manual = [
+    ['조립', TOL.split(' / ')[0], TOL, 'GC', 5, 3, 2],
+    ['', '자일렌', XYL, 'GC', null, 2, null],
+    ['', '소음', '소음 / 물리 / 소음노출량계', '소음노출량계', null, 2, null],
+  ];
+  let m = errs(run(o)).join('\n');
+  assert.match(m, /직접입력 3건 \/ 계획서 2건/);
+  assert.match(m, /직접입력 인자와 계획서 인자가 다릅니다/);
+
+  const o2 = good(); o2.mode = '수동';
+  o2.manual = [
+    ['조립', '톨루엔', '톨루엔 / 고체 / GC', 'GC', 5, 2, 2],
+    ['', '아세톤', '아세톤 / 확산 / HPLC', 'GC', null, null, null],
+    ['', '소음', '소음 / 물리 / 소음노출량계', '소음노출량계', null, 2, null],
+  ];
+  m = errs(run(o2)).join('\n');
+  assert.match(m, /동시포집 기준 위반: 톨루엔 \+ 아세톤/);
+});
