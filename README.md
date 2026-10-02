@@ -11,6 +11,13 @@ npm run build      # 내 관리 화면에 붙일 번들 생성 → dist/
 npm run check      # 테스트 + 빌드
 ```
 
+## 여러 사람이 같이 쓰려면 (배포)
+`npm run build` 로 만들어지는 **`dist/` 폴더 하나**가 배포 단위입니다(저장소에도 커밋돼 있음).
+이 폴더를 사내 웹 서버/정적 호스팅(IIS, Nginx, GitHub Pages, S3 등)에 올리고 `index.html` 주소를 공유하면 됩니다.
+파일은 각자의 브라우저에서만 읽으므로 서버에는 정적 파일만 있으면 됩니다.
+엑셀 파일을 더블클릭해 `file://` 로 여는 방식은 브라우저가 모듈 로딩을 막아 동작하지 않습니다(웹 서버 필요).
+기준값(노임단가 등)을 모두가 같게 쓰려면 아래 위젯의 `config`/`onConfigChange` 를 서버에 연결하세요.
+
 ## 내 관리 화면에 붙이기 (위젯)
 `dist/quotation-review.js` 와 `dist/vendor/`(SheetJS·pdf.js)를 관리 화면과 같은 곳에 두고 한 줄로 붙입니다.
 스타일은 모두 `.qr` 아래로 격리되어 기존 화면 CSS 와 섞이지 않습니다. 예시: `web/embed-example.html`
