@@ -6,10 +6,15 @@
   "description": "건설사 측정 견적서/결과서 검토 도구 (현대·계룡·한화)",
   "scripts": {
     "test": "node --test test/*.test.mjs",
-    "serve": "node scripts/serve.mjs"
+    "serve": "node scripts/serve.mjs",
+    "build": "node scripts/build.mjs",
+    "check": "npm test && npm run build"
   },
   "dependencies": {
     "pdfjs-dist": "^3.11.174",
     "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2"
   }
 }

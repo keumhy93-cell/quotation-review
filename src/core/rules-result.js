@@ -78,7 +78,7 @@ export function reviewResultSet(results) {
   const sites = [...new Set(results.map((r) => r.cover.site).filter(Boolean))];
   if (sites.length > 1) out.push(F('error', '결과서 간', `사업장명이 서로 다름: ${sites.join(' / ')}`));
   const seen = new Map(), limits = new Map();
-  for (const res of results) for (const r of res.rows) {
+  for (const res of results) for (const r of res.rows || []) {
     for (const h of r.hazards) {
       const k = `${r.dept}|${r.work}|${normHazard(h)}`;
       if (seen.has(k) && seen.get(k) !== res.file) out.push(F('warn', '결과서 간', `[${r.dept} ${r.work}] ${h} 가 ${seen.get(k)} 와 ${res.file} 에 중복 측정됨`));
@@ -98,7 +98,7 @@ export function compareResultToEstimate(resList, est, aliases = {}) {
   const out = [];
   const combo = (hs) => [...new Set(hs.map((h) => canonHazard(h, aliases)))].sort().join(' + ');
   const resCombos = new Map();
-  for (const res of resList) for (const r of res.kind === 'pdf' ? pdfRows(res) : res.rows) {
+  for (const res of resList) for (const r of res.kind === 'pdf' ? pdfRows(res) : (res.rows || [])) {
     if (!r.hazards.length) continue;
     const k = combo(r.hazards); resCombos.set(k, (resCombos.get(k) || 0) + 1);
   }

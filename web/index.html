@@ -5,92 +5,19 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>견적서·결과서 검토</title>
 <link rel="icon" href="data:,">
-<link rel="stylesheet" href="style.css">
+<style>
+  body { margin: 0; background: #f6f7f9; font-family: -apple-system, "Segoe UI", "Noto Sans KR", "Malgun Gothic", sans-serif; }
+  @media (prefers-color-scheme: dark) { body { background: #14181f; color: #e7ebf2; } }
+  header, #app { max-width: 1120px; margin: 0 auto; padding: 0 16px; }
+  header { padding-top: 20px; } h1 { font-size: 21px; margin: 0; } .sub { margin: 2px 0 14px; color: #667085; font-size: 13px; }
+</style>
 </head>
 <body>
 <header>
   <h1>작업환경측정 견적서·결과서 검토</h1>
   <p class="sub">엑셀·PDF 는 이 브라우저 안에서만 읽습니다. 서버로 업로드되지 않습니다.</p>
 </header>
-
-<nav id="companies" class="tabs" role="tablist">
-  <button data-co="hyundai" class="on">현대건설 <small>품셈</small></button>
-  <button data-co="gyeryong">계룡건설 <small>단가제</small></button>
-  <button data-co="hanwha">한화건설 <small>단가제</small></button>
-  <button data-co="config" class="right">설정</button>
-</nav>
-
-<main>
-  <section id="review">
-    <div class="card">
-      <h2>1. 파일 올리기</h2>
-      <div class="grid">
-        <label class="drop" id="drop-est">
-          <b>견적서</b>
-          <span id="hint-est">xlsm / xlsx</span>
-          <input type="file" id="f-est" accept=".xlsx,.xlsm,.xls">
-          <em id="n-est"></em>
-        </label>
-        <label class="drop" id="drop-sub" data-only="hyundai">
-          <b>사업장 제출용 엑셀 <small>(선택)</small></b>
-          <span>실시현황·계획서·재료비 — 견적서와 일치하는지 대조</span>
-          <input type="file" id="f-sub" accept=".xlsx,.xlsm,.xls">
-          <em id="n-sub"></em>
-        </label>
-        <label class="drop" id="drop-res">
-          <b>결과서 <small>(선택, 여러 개)</small></b>
-          <span>PDF 또는 엑셀</span>
-          <input type="file" id="f-res" accept=".pdf,.xlsx,.xlsm,.xls" multiple>
-          <em id="n-res"></em>
-        </label>
-      </div>
-      <div class="row" data-only="hyundai">
-        <label>견적 유형
-          <select id="type">
-            <option value="">파일에서 자동 판별</option>
-            <option>정기자동</option><option>수시자동</option><option>정기수동</option><option>수시수동</option>
-          </select>
-        </label>
-        <span class="muted">선택한 유형과 파일 내용이 다르면 오류로 표시합니다.</span>
-      </div>
-      <div class="row">
-        <button id="run" class="primary" disabled>검토 실행</button>
-        <span id="status" class="muted"></span>
-      </div>
-    </div>
-
-    <div id="out" hidden>
-      <div class="card">
-        <div class="row between">
-          <h2>2. 검토 결과</h2>
-          <div class="row">
-            <label class="chk"><input type="checkbox" id="show-info"> 참고(info) 보기</label>
-            <button id="export">엑셀로 저장</button>
-          </div>
-        </div>
-        <div id="counts" class="counts"></div>
-        <div id="stats" class="muted"></div>
-      </div>
-      <div id="groups"></div>
-    </div>
-  </section>
-
-  <section id="config" hidden>
-    <div class="card">
-      <h2>기준 설정</h2>
-      <p class="muted">정기/수시 계수·노임단가, 단가제 별칭, 건설업 여부 등을 JSON 으로 수정합니다. 이 브라우저에 저장됩니다.</p>
-      <textarea id="cfg" spellcheck="false"></textarea>
-      <div class="row">
-        <button id="cfg-save" class="primary">저장</button>
-        <button id="cfg-reset">기본값으로</button>
-        <span id="cfg-msg" class="muted"></span>
-      </div>
-    </div>
-  </section>
-</main>
-
-<script src="vendor/xlsx.full.min.js"></script>
-<script src="vendor/pdf.min.js"></script>
+<div id="app"></div>
 <script type="module" src="app.js"></script>
 </body>
 </html>

@@ -3,7 +3,7 @@ import { itemsToLines } from '../src/core/pdf-lines.js';
 /** PDF(ArrayBuffer) → 줄바꿈 텍스트. pdf.js 는 web/vendor/pdf.min.js 가 전역 pdfjsLib 로 제공 */
 export async function pdfToText(buffer) {
   const lib = globalThis.pdfjsLib;
-  lib.GlobalWorkerOptions.workerSrc = new URL('./vendor/pdf.worker.min.js', import.meta.url).href;
+  if (!lib.GlobalWorkerOptions.workerSrc) lib.GlobalWorkerOptions.workerSrc = new URL('./vendor/pdf.worker.min.js', import.meta.url).href;
   const doc = await lib.getDocument({ data: new Uint8Array(buffer) }).promise;
   const pages = [];
   for (let i = 1; i <= doc.numPages; i++) {

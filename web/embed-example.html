@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>관리 화면에 붙이는 예시</title>
+<link rel="icon" href="data:,">
+</head>
+<body style="margin:0;padding:24px;font-family:sans-serif">
+  <h1 style="font-size:18px">내 관리 화면 (예시)</h1>
+  <p>아래 영역이 검토 위젯입니다. 이 페이지 코드가 호스트 화면에 붙이는 방법의 전부입니다.</p>
+  <div id="review-box"></div>
+
+  <script type="module">
+    import { mountReview } from '../dist/quotation-review.js';
+
+    const box = mountReview(document.getElementById('review-box'), {
+      companies: ['hyundai', 'gyeryong', 'hanwha'], // 노출할 회사
+      company: 'hyundai',                           // 처음 탭
+      // config: await fetch('/api/review-config').then(r => r.json()),   // 서버에서 기준값을 관리하려면
+      // storageKey: null,                                                 // 브라우저 저장을 끄려면
+      onConfigChange: (cfg) => console.log('기준 저장', cfg),             // 예: fetch('/api/review-config', { method:'PUT', body: JSON.stringify(cfg) })
+      onResult: (r) => console.log('검토 결과', r),
+    });
+    window.box = box;
+  </script>
+</body>
+</html>

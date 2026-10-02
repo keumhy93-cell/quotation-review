@@ -6,8 +6,41 @@
 ```bash
 npm install
 npm run serve      # http://localhost:8080  (스크립트가 /web/index.html 로 이동)
-npm test
+npm test           # 단위 테스트
+npm run build      # 내 관리 화면에 붙일 번들 생성 → dist/
+npm run check      # 테스트 + 빌드
 ```
+
+## 내 관리 화면에 붙이기 (위젯)
+`dist/quotation-review.js` 와 `dist/vendor/`(SheetJS·pdf.js)를 관리 화면과 같은 곳에 두고 한 줄로 붙입니다.
+스타일은 모두 `.qr` 아래로 격리되어 기존 화면 CSS 와 섞이지 않습니다. 예시: `web/embed-example.html`
+
+```html
+<div id="review-box"></div>
+<script type="module">
+  import { mountReview } from './dist/quotation-review.js';
+  const box = mountReview(document.getElementById('review-box'), {
+    companies: ['hyundai', 'gyeryong', 'hanwha'],   // 노출할 회사
+    company: 'hyundai',                             // 처음 탭
+    config: await (await fetch('/api/review-config')).json(),   // (선택) 서버가 관리하는 기준값 — 일부만 줘도 기본값과 병합
+    onConfigChange: (cfg) => fetch('/api/review-config', { method: 'PUT', body: JSON.stringify(cfg) }),
+    onResult: (result) => console.log(result),      // 검토가 끝날 때마다
+  });
+</script>
+```
+| 옵션 | 설명 |
+|---|---|
+| `config` | 호스트가 관리하는 기준 설정. 주면 브라우저 저장소 대신 이 값을 사용 |
+| `storageKey` | 기준 설정을 브라우저에 저장할 키 (`null` 이면 저장 안 함) |
+| `onConfigChange(cfg)` | 「기준 관리」에서 저장/초기화할 때 호출 — 서버 저장은 여기서 |
+| `onResult(result)` | 검토 결과 객체 (`estimate`, `submission`, `results`, `resultSet`, `compare`) |
+| `assetBase` | `vendor/` 폴더 URL (기본: 번들 파일 위치) |
+| `showConfig` | 「기준 관리」 탭 표시 여부 |
+반환값: `getConfig()`, `setConfig(cfg)`, `getResult()`, `destroy()`.
+
+「기준 관리」 탭에서 정기/수시 견적금액 계수·노임단가(특·고·중·초급), 업종, 유해인자·분석방법 별칭을 폼으로 관리하고
+JSON 으로 내보내기/가져오기 할 수 있습니다. **수시수동은 정기수동과 같은 규칙이고 계수·노임단가만 다릅니다.**
+잘못된 값(음수, 계수 범위 밖, 깨진 JSON)은 저장 전에 막습니다.
 
 ## 무엇을 검토하나
 
@@ -42,7 +75,8 @@ npm test
 ```
 src/core/   hyundai.js(현대 견적) unitprice.js(계룡·한화) result-pdf.js(결과서 PDF) rules-result.js(결과서 엑셀·조합 비교)
             util.js config.js read.js pdf-lines.js index.js(runReview)
-web/        index.html app.js style.css pdf-text.js vendor/(SheetJS, pdf.js)
+web/        widget.js(임베드 위젯) widget-style.js index.html(단독 페이지) embed-example.html pdf-text.js vendor/(SheetJS, pdf.js)
+dist/       npm run build 결과 — quotation-review.js + vendor/
 test/       합성 데이터 테스트 (실제 고객 파일은 저장소에 넣지 않았습니다)
 ```
 기준값(노임단가·계수·유해인자 별칭·분석방법 별칭)은 화면의 **설정** 탭 JSON 에서 바꿀 수 있습니다.
@@ -51,4 +85,5 @@ test/       합성 데이터 테스트 (실제 고객 파일은 저장소에 넣
 - 현대 **수동** 견적서는 작성본 1건(정기수동)으로 확인했습니다. 수시수동 작성본은 아직 없습니다.
 - 결과서 PDF 의 **사용실태 표**와 **임시·단시간 허용소비량** 표시 양식은 해당 내용이 있는 샘플이 없어 키워드 기반입니다.
 - 현대건설 결과서는 PDF 샘플이 없어 계룡·한화 결과서 양식으로 만들었습니다.
+- 현대 **수시수동** 작성본은 없습니다. 정기수동 작성본과 같은 규칙으로 동작하며, 수시 노임단가는 샘플 견적서·PDF 값을 기준으로 넣었습니다.
 - 스캔(이미지) PDF 는 텍스트가 없어 읽을 수 없습니다.

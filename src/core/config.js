@@ -34,3 +34,34 @@ export const DEFAULT_CONFIG = {
     { match: '분진|용접흄|광물성|시멘트|목재|규산염', methods: ['중량분석법'] },
   ],
 };
+
+const isObj = (x) => x && typeof x === 'object' && !Array.isArray(x);
+/** 기본값 위에 사용자 설정을 깊게 덮어쓴다. 일부 항목만 있거나 오래된 저장본이어도 안전하다 (배열은 통째로 교체). */
+export function mergeConfig(user, base = DEFAULT_CONFIG) {
+  const out = JSON.parse(JSON.stringify(base));
+  const walk = (dst, src) => {
+    if (!isObj(src)) return dst;
+    for (const [k, v] of Object.entries(src)) {
+      if (v === undefined) continue;
+      if (isObj(v) && isObj(dst[k])) walk(dst[k], v);
+      else dst[k] = JSON.parse(JSON.stringify(v));
+    }
+    return dst;
+  };
+  return walk(out, user);
+}
+
+/** 설정 값 점검: 문제가 있으면 사람이 읽을 수 있는 메시지 배열을 돌려준다. */
+export function validateConfig(cfg) {
+  const errs = [];
+  const num = (v) => typeof v === 'number' && Number.isFinite(v) && v >= 0;
+  for (const per of ['정기', '수시']) {
+    const r = cfg?.companies?.hyundai?.rates?.[per];
+    if (!r) { errs.push(`현대건설 ${per} 기준이 없습니다.`); continue; }
+    if (!(num(r.factor) && r.factor > 0 && r.factor <= 1)) errs.push(`${per} 견적금액 계수는 0 초과 1 이하여야 합니다.`);
+    for (const g of ['특급기술자', '고급기술자', '중급기술자', '초급기술자']) if (!num(r.wage?.[g])) errs.push(`${per} ${g} 노임단가가 올바른 숫자가 아닙니다.`);
+  }
+  if (!isObj(cfg?.hazardAliases)) errs.push('유해인자 별칭은 JSON 객체여야 합니다.');
+  if (!isObj(cfg?.methodAliases)) errs.push('분석방법 별칭은 JSON 객체여야 합니다.');
+  return errs;
+}
