@@ -4,6 +4,7 @@
  * 대상 양식: 산업안전보건법 시행규칙 별지 제82호(결과보고서)·제83호(결과표) + 협회 종합의견 서식.
  */
 import { finding as F, norm, expectedSamples, splitLines, canonHazard } from './util.js';
+import { reviewUsage } from './rules-usage.js';
 
 const TIME_RE = /\d{1,2}:\d{2}\s*~\s*\d{1,2}:\d{2}/;
 const FREQ_RE = /(\d+\s*(회|시간|분|일|주|월|번))|((일|주|월|연)\s*\d+)/;
@@ -41,17 +42,17 @@ export function parseResultText(text, file = '') {
 
   // ── 측정계획: 부서 / 유해인자 / 근로자수 / 건수
   const planLines = section(lines, /나\.\s*작업환경측정\s*공정별/, /다\.\s*공정별\s*화학물질/);
-  let dept = null, wk = null;
+  let dept = null, wk = null, curCat = '';
   for (const raw of planLines) {
     const l = raw.trim();
     if (!l || /측정대상|유해|예상시료|발생|주기|\(폭로|채취건수|측정건수|^수\s|^인자|^또는|근로자|개인\/지역|작업시간/.test(l) && !/<|개인|지역/.test(l)) continue;
     if (/작업환경측정에\s*걸리는/.test(l)) continue;
     const cat = l.match(/^(.*?)\s*<\s*(\S+)\s*>\s*$/);
-    if (cat) { if (cat[1].trim()) { dept = cat[1].trim(); wk = null; } continue; }
+    if (cat) { if (cat[1].trim()) { dept = cat[1].trim(); wk = null; } curCat = cat[2]; continue; }
     let m = l.match(/^(.+?)\s+(?:(불규칙|연속|\S*주기\S*|\S+)\s+)?(\d+)\s+(\d+(?:\.\d+)?)\s*\(\s*\d+(?:\.\d+)?\s*\)\s+(개인|지역)\s+(\d+)\s*$/);
-    if (m) { wk = Number(m[3]); r.plan.push({ dept, hazard: m[1].trim(), workers: wk, method: m[5], count: Number(m[6]) }); continue; }
+    if (m) { wk = Number(m[3]); r.plan.push({ dept, hazard: m[1].trim(), workers: wk, method: m[5], count: Number(m[6]), cat: curCat, physical: /물리/.test(curCat) || m[1].trim() === '소음' }); continue; }
     m = l.match(/^(.+?)\s+(개인|지역)\s+(\d+)\s*$/);
-    if (m) r.plan.push({ dept, hazard: m[1].trim(), workers: wk, method: m[2], count: Number(m[3]) });
+    if (m) r.plan.push({ dept, hazard: m[1].trim(), workers: wk, method: m[2], count: Number(m[3]), cat: curCat, physical: /물리/.test(curCat) || m[1].trim() === '소음' });
   }
   const depts = [...new Set(r.plan.map((p) => p.dept).filter(Boolean))];
   const hazardSet = new Set([...known, ...r.plan.map((p) => p.hazard)]);
@@ -85,6 +86,18 @@ export function parseResultText(text, file = '') {
   { let d = null; for (const l of r.chemUse.split('\n')) { const t = l.trim(); if (!t || /부서\s*또는|화학물질명|제조|또는|사용\s*용도|여부|월\s*취급량|\(단위\)/.test(t) && !depts.some((x) => t.startsWith(x))) continue;
     const hit = depts.filter((x) => t.startsWith(x)).sort((a, b) => b.length - a.length)[0]; if (hit) d = hit;
     if (d) r.chemUseByDept.set(d, (r.chemUseByDept.get(d) || '') + ' ' + t); } }
+  // 제품(행) 단위: '사용/제조' 표시가 있는 줄이 새 행, 이어지는 줄(줄바꿈된 용도·비고)은 앞 행에 붙인다
+  r.usageRows = [];
+  { let d = null, row = null;
+    for (const l of r.chemUse.split('\n')) {
+      const t = l.trim(); if (!t || /부서\s*또는|화학물질명\s*\(|^제조$|^또는$|^사용$|^여부$|^\(단위\)$|월\s*취급량$|사용\s*용도$/.test(t)) continue;
+      if (/해당\s*사항\s*없음/.test(t)) continue;
+      const hit = depts.filter((x) => t.startsWith(x)).sort((a, b) => b.length - a.length)[0];
+      if (hit) d = hit;
+      const rest = hit ? t.slice(hit.length).trim() : t;
+      if (/(^|\s)(사용|제조(\/사용)?)(\s|$)/.test(rest) || !row) { row = { dept: d, text: rest }; r.usageRows.push(row); }
+      else row.text += ' ' + rest;
+    } }
 
   // ── 결과표(나-1: 소음 제외) → 시료(측정위치) 단위 유해인자 조합. 시간대가 있는 줄이 새 시료, 없으면 앞 시료에 이어진 인자
   const res1 = section(lines, /나-1\.\s*단위작업/, /나-2\.\s*단위작업|3\.\s*측정\s*결과에\s*따른/);
@@ -168,13 +181,13 @@ export function reviewResultPdf(res, cfg) {
   for (const s of res.samples.filter((s) => s.exceed)) out.push(F('warn', '초과', `[${s.dept}] 소음 ${s.person || ''} 노출기준 초과`));
 
   // 5) 분포실태 ↔ 측정계획 (부서별 유해인자 누락/과다)
-  const used = new Set();
+  const used = new Set(), distFor = new Map();
   for (const d of res.distribution) {
     const cand = [...byDept].filter(([dept, a]) => !used.has(dept) && (d.workers == null || a.workers === d.workers));
     if (!cand.length) continue;
     const score = (a) => { const s = setOf(a.rows.map((x) => x.hazard)); return d.hazards.filter((h) => s.has(norm(h))).length; };
     const [dept, a] = cand.sort((x, y) => score(y[1]) - score(x[1]))[0];
-    used.add(dept);
+    used.add(dept); distFor.set(dept, d);
     const ps = setOf(a.rows.map((x) => x.hazard)), ds = setOf(d.hazards);
     const miss = a.rows.map((x) => x.hazard).filter((h, i, arr) => arr.indexOf(h) === i && !ds.has(norm(h)));
     const extra = d.hazards.filter((h) => !ps.has(norm(h)));
@@ -184,21 +197,7 @@ export function reviewResultPdf(res, cfg) {
     if (/임시|단시간|허용소비량/.test(d.text) && !FREQ_RE.test(d.text.replace(/임시|단시간/g, ''))) out.push(F('error', '임시·단시간', `[${dept}] 임시·단시간 허용소비량 언급이 있으나 사용빈도(예: 월 2회)가 구체적이지 않습니다.`));
   }
   if (res.distribution.length && res.distribution.length !== byDept.size) out.push(F('warn', '분포실태', `분포실태 공정 ${res.distribution.length}개 ≠ 측정계획 부서 ${byDept.size}개`));
-  // 6) 사용실태(화학물질 사용 상태) 비고에 적힌 유해인자 ↔ 측정계획, 임시·단시간 허용소비량 사용빈도
-  for (const [dept, txt] of res.chemUseByDept || []) {
-    const flat = norm(txt);
-    const planned = new Set(res.plan.filter((p) => p.dept === dept).map((p) => canonHazard(p.hazard, aliases)));
-    for (const [k, v] of Object.entries(aliases)) {
-      if (!flat.includes(norm(k))) continue;
-      const cv = canonHazard(k, aliases);
-      if (res.plan.some((p) => p.dept) && !planned.has(cv)) out.push(F('error', '측정 누락', `[${dept}] 사용실태에 '${k}'(→${v}) 언급이 있으나 측정계획에 없습니다.`));
-    }
-    if (/임시|단시간|허용소비량/.test(txt) && !FREQ_RE.test(txt.replace(/임시|단시간/g, ''))) out.push(F('error', '임시·단시간', `[${dept}] 사용실태에 임시·단시간 허용소비량 표시가 있으나 비고에 사용빈도가 구체적이지 않습니다.`));
-    if (/임시|단시간|허용소비량/.test(txt)) {
-      const d = res.distribution.find((x) => /임시|단시간/.test(x.text) && x.hazards.some((h) => planned.has(canonHazard(h, aliases))));
-      if (!d) out.push(F('error', '임시·단시간', `[${dept}] 임시·단시간 허용소비량 체크가 있으나 분포실태에 해당 내용이 기재되어 있지 않습니다.`));
-    }
-  }
+  out.push(...reviewUsage(res, cfg, distFor));
   out.stats = { depts: byDept.size, planRows: res.plan.length, samples: res.samples.length, summary: res.summary.length };
   return out;
 }

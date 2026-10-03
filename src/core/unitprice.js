@@ -20,18 +20,34 @@ export function siteParts(name) {
 }
 const sameSite = (a, b) => { const x = siteParts(a).site, y = siteParts(b).site; return !!x && !!y && (x === y || x.includes(y) || y.includes(x)); };
 
+/** 단가 시트 → { base:[{label,range,price}], methods: Map<정규화 규격명, 단가> , labels: Map<정규화, 원문> } */
+export function parsePriceRows(rows) {
+  const table = { base: [], methods: new Map(), labels: new Map() };
+  for (const row of rows) {
+    const c = row?.[2], d = toNum(row?.[3]);
+    if (c != null && d != null) {
+      if (bracket(c)) table.base.push({ label: String(c).trim(), range: bracket(c), price: d });
+      else { table.methods.set(norm(c), d); table.labels.set(norm(c), String(c).trim()); }
+    }
+  }
+  return table;
+}
+
+/** 견적 파일의 단가 시트를 '계약 기준 단가표'(설정에 저장하는 JSON)로 뽑는다 */
+export function extractContract(wb) {
+  const sh = readSheets(wb).find((s) => s.name === '단가');
+  if (!sh) throw new Error("'단가' 시트를 찾지 못했습니다.");
+  const t = parsePriceRows(sh.rows);
+  if (!t.base.length && !t.methods.size) throw new Error('단가 시트에서 기본관리비/분석수수료 단가를 읽지 못했습니다.');
+  return { base: t.base, methods: Object.fromEntries([...t.methods].map(([k, v]) => [t.labels.get(k), v])) };
+}
+
 export function parseUnitPrice(wb) {
   const sheets = readSheets(wb);
   const p = { blocks: [], status: [], table: { base: [], methods: new Map() }, warnings: [] };
 
   const tbl = sheets.find((s) => s.name === '단가');
-  if (tbl) for (const row of tbl.rows) {
-    const c = row?.[2], d = toNum(row?.[3]);
-    if (c != null && d != null) {
-      if (bracket(c)) p.table.base.push({ label: String(c).trim(), range: bracket(c), price: d });
-      else p.table.methods.set(norm(c), d);
-    }
-  }
+  if (tbl) p.table = parsePriceRows(tbl.rows);
   else p.warnings.push("'단가' 시트를 찾지 못했습니다.");
 
   const st = sheets.find((s) => s.name.includes('실시현황'));
@@ -91,9 +107,19 @@ export function blockGroups(block, cfg) {
   return block.items.map((it) => ({ hazards: expandHazards(it.hazardText), samples: it.samples, blank: false, dept: it.gong, method: it.method, canon: expandHazards(it.hazardText).map((h) => canonHazard(h, al)) }));
 }
 
-export function reviewUnitPrice(est, cfg) {
+export function reviewUnitPrice(est, cfg, company) {
   const out = [];
   est.warnings.forEach((w) => out.push(F('warn', '파싱', w)));
+  // 계약 기준 단가표(설정)가 있으면 그것을 기준으로 검증하고, 파일 안의 단가표가 계약과 같은지도 본다
+  const contract = cfg.companies?.[company]?.contract;
+  if (contract && (contract.base?.length || Object.keys(contract.methods || {}).length)) {
+    const ct = { base: (contract.base || []).map((b) => ({ ...b, range: b.range || bracket(b.label) })), methods: new Map(), labels: new Map() };
+    for (const [k, v] of Object.entries(contract.methods || {})) { ct.methods.set(norm(k), v); ct.labels.set(norm(k), k); }
+    for (const b of ct.base) { const f = est.table.base.find((x) => norm(x.label) === norm(b.label)); if (!f) out.push(F('warn', '계약단가', `파일의 단가 시트에 기본관리비 '${b.label}' 가 없습니다 (계약 ${won(b.price)}원).`)); else if (f.price !== b.price) out.push(F('error', '계약단가', `단가 시트의 기본관리비 ${b.label} ${won(f.price)}원 ≠ 계약 ${won(b.price)}원`)); }
+    for (const [k, v] of ct.methods) { const f = est.table.methods.get(k); if (f == null) out.push(F('warn', '계약단가', `파일의 단가 시트에 '${ct.labels.get(k)}' 가 없습니다 (계약 ${won(v)}원).`)); else if (f !== v) out.push(F('error', '계약단가', `단가 시트의 ${ct.labels.get(k)} ${won(f)}원 ≠ 계약 ${won(v)}원`)); }
+    for (const [k] of est.table.methods) if (!ct.methods.has(k)) out.push(F('warn', '계약단가', `단가 시트의 '${est.table.labels.get(k)}' 는 계약 단가표에 없습니다.`));
+    est = { ...est, table: ct };
+  } else out.push(F('info', '계약단가', '계약 기준 단가표가 설정되지 않아 견적 파일 안의 단가 시트를 기준으로 검증했습니다 (기준 관리에서 계약 단가표를 등록하세요).'));
   const mAlias = Object.fromEntries(Object.entries(cfg.methodAliases || {}).map(([k, v]) => [norm(k), norm(v)]));
   const priceOf = (m) => { const k = norm(m); return est.table.methods.get(k) ?? est.table.methods.get(mAlias[k]); };
   const hints = (cfg.hazardMethodHints || []).map((h) => ({ re: new RegExp(h.match), methods: h.methods }));

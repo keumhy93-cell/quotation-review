@@ -43,6 +43,12 @@ test('결과서 ↔ 견적서 조합·건수 비교', () => {
   assert.match(m, /조합 \[자일렌 \+ 톨루엔\]: 견적서 2건 \/ 결과서 1건/);
   assert.match(m, /조합 \[소음\]: 견적서 2건 \/ 결과서 0건/);
   assert.match(m, /조합 \[톨루엔\]: 견적서 0건 \/ 결과서 1건/);
+  // 재료비(톨루엔·자일렌)와 결과서 대상 유해인자(톨루엔·자일렌)는 일치
+  assert.match(r.compare.map((f) => f.message).join('\n'), /재료비 세부산출표와 결과서 대상 유해인자가 일치합니다 \(2종\)/);
+  // 결과서에만 벤젠이 있으면 재료비 누락
+  const res2 = wbFrom({ 결과: [['부서', '단위작업', '인원', '유해인자', '사용실태'], ['A', 'x', 5, '톨루엔, 자일렌', ''], ['A', 'x', 5, '벤젠', '']] });
+  const r2 = runReview({ company: 'hyundai', cfg, estimateWb: est, resultWbs: [{ name: 'r2.xlsx', wb: res2 }] });
+  assert.match(r2.compare.map((f) => f.message).join('\n'), /결과서 대상 유해인자 '벤젠' 가 견적서 재료비 세부산출표에 없습니다/);
 });
 
 test('계룡 단가제: 기본관리비·단가·건수·합계·실시현황 검증', () => {

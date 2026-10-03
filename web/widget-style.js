@@ -36,5 +36,15 @@ export const CSS = `
 .qr .qr-cfg-box label{display:flex;justify-content:space-between;align-items:center;gap:10px;margin:6px 0}
 .qr .qr-cfg-box input[type=number]{width:140px;text-align:right}
 .qr textarea{width:100%;min-height:120px;font:12.5px/1.5 ui-monospace,Menlo,Consolas,monospace;background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:10px}
+.qr td.nw,.qr th.nw{white-space:nowrap}.qr .qr-stack{display:grid;gap:14px}
+.qr .qr-chip{margin:0 6px 6px 0;padding:4px 12px;border-radius:999px;background:var(--infobg);color:var(--ink);border:1px solid var(--line)}
+.qr .qr-modal-back{position:fixed;inset:0;background:rgba(10,15,25,.55);z-index:2147483000;display:flex;align-items:flex-start;justify-content:center;padding:5vh 12px;overflow:auto}
+.qr .qr-modal{background:var(--card);color:var(--ink);border:1px solid var(--line);border-radius:12px;padding:18px;width:min(560px,100%);box-shadow:0 12px 40px rgba(0,0,0,.35)}
+.qr .qr-modal.wide{width:min(900px,100%)}
+.qr .qr-modal h3{font-size:16px;margin:0 0 8px}.qr .qr-modal h4{font-size:13px;margin:12px 0 4px;color:var(--mute)}
+.qr .qr-modal-body{max-height:60vh;overflow:auto;margin:8px 0}.qr .qr-modal ul{margin:4px 0;padding-left:18px}
+.qr .qr-miss{border:1px solid var(--line);border-radius:8px;padding:10px;margin:8px 0}
+.qr .qr-site{border-left:3px solid var(--line);padding:4px 10px;margin:8px 0}.qr .qr-site ul{margin:4px 0;padding-left:18px}
+.qr hr{border:0}
 .qr .qr-msg{font-size:13px}.qr .qr-msg.err{color:var(--err)}.qr .qr-msg.ok{color:var(--ok)}
 `;

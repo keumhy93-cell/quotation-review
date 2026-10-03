@@ -13,13 +13,18 @@
  *   onResult(result)     검토가 끝날 때마다 호출
  *   assetBase    vendor/ 폴더(SheetJS·pdf.js)가 있는 URL (기본: 이 파일 위치)
  *   showConfig   기준 관리 탭 표시 여부 (기본 true)
+ *   view         처음 열 탭: 'work'(분기 작업, 기본) | 'hyundai' | 'gyeryong' | 'hanwha'(빠른 검토)
+ *   store        분기 작업 저장소: 'auto'(기본: 공유 서버가 있으면 서버, 없으면 이 브라우저) | 'server' | 'idb' | 'memory' | 직접 만든 저장소 객체
+ *   serverUrl    공유 서버 주소(기본: 같은 주소)   token  공유 서버 접근 토큰   user  이력에 남길 작업자 이름
  *   darkAuto     OS 다크모드 따라가기 (기본 true)
  */
 import { runReview, DEFAULT_CONFIG, mergeConfig } from '../src/core/index.js';
 import { validateConfig } from '../src/core/config.js';
+import { extractContract } from '../src/core/unitprice.js';
 import { loadWorkbook } from '../src/core/read.js';
 import { useXLSX } from '../src/core/xlsx.js';
 import { pdfToText } from './pdf-text.js';
+import { mountWorkspace, pickStore } from './workspace-ui.js';
 import { CSS } from './widget-style.js';
 
 const COMPANIES = { hyundai: ['현대건설', '품셈'], gyeryong: ['계룡건설', '단가제'], hanwha: ['한화건설', '단가제'] };
@@ -66,15 +71,17 @@ export function mountReview(el, opts = {}) {
   if (!o.assetBase.endsWith('/')) o.assetBase += '/';
   injectStyle();
 
-  const st = { view: o.company, est: null, sub: null, res: [], last: null, busy: false, destroyed: false };
+  const st = { view: opts.view || (opts.company ? o.company : 'work'), est: null, sub: null, res: [], last: null, busy: false, destroyed: false };
   let cfg = mergeConfig(o.config ?? store.get(o.storageKey) ?? {});
 
   el.classList.add('qr'); if (o.darkAuto) el.classList.add('qr-auto-dark');
   el.innerHTML = `
     <nav class="qr-tabs" data-r="tabs">
-      ${o.companies.map((c) => `<button data-co="${c}">${COMPANIES[c][0]} <small>${COMPANIES[c][1]}</small></button>`).join('')}
+      <button data-co="work">분기 작업</button>
+      ${o.companies.map((c) => `<button data-co="${c}">빠른 검토 · ${COMPANIES[c][0]}</button>`).join('')}
       ${o.showConfig ? '<button data-co="config" class="qr-right">기준 관리</button>' : ''}
     </nav>
+    <section data-r="work" hidden><div data-r="work-root"><p class="qr-mute">불러오는 중…</p></div></section>
     <section data-r="review">
       <div class="qr-card">
         <h2>1. 파일 올리기</h2>
@@ -106,6 +113,10 @@ export function mountReview(el, opts = {}) {
           <label>업종 <select data-r="cfg-industry"><option>건설업</option><option>기타</option></select></label>
           <p class="qr-mute" style="margin:4px 0">건설업이면 결과서 갑지에서 "2회 연속 미만/초과" 체크를 오류로 봅니다.</p>
         </div>
+        <div class="qr-cfg-box" style="margin-top:14px"><h3>계약 단가표 <small>(계룡·한화 — 견적 단가가 계약 조건과 같은지 검증하는 기준)</small></h3>
+          <p class="qr-mute" style="margin:4px 0">계약 단가가 들어 있는 견적 엑셀(‘단가’ 시트)을 올리면 그 단가표를 계약 기준으로 저장합니다. 이후 견적서는 이 기준과 비교합니다.</p>
+          ${['gyeryong', 'hanwha'].map((c) => `<div class="qr-row"><b style="width:70px">${COMPANIES[c][0]}</b><span class="qr-mute" data-r="contract-info-${c}"></span><label class="qr-drop" style="min-height:0;padding:4px 12px;border-style:solid"><span style="color:inherit">단가표 올리기</span><input type="file" data-r="contract-${c}" accept=".xlsx,.xlsm,.xls"></label><button data-r="contract-clear-${c}">기준 삭제</button></div>`).join('')}
+        </div>
         <details style="margin-top:14px"><summary>유해인자·분석방법 별칭 (JSON)</summary>
           <p class="qr-mute">계룡·한화 견적서의 약칭을 결과서 유해인자명으로, 분석방법명을 단가표 규격명으로 연결합니다.</p>
           <b>유해인자 별칭</b><textarea data-r="cfg-haz" spellcheck="false"></textarea>
@@ -121,14 +132,28 @@ export function mountReview(el, opts = {}) {
   // ── 탭
   const applyView = () => {
     $$('[data-co]').forEach((b) => b.classList.toggle('on', b.dataset.co === st.view));
-    const isCfg = st.view === 'config';
-    $('review').hidden = isCfg; $('config').hidden = !isCfg;
+    const isCfg = st.view === 'config', isWork = st.view === 'work';
+    $('review').hidden = isCfg || isWork; $('config').hidden = !isCfg; $('work').hidden = !isWork;
     if (isCfg) fillConfig();
+    if (isWork) startWork();
     $$('[data-only]').forEach((n) => { n.hidden = n.dataset.only !== st.view; });
     $('hint-est').textContent = st.view === 'hyundai' ? '표준품셈 견적서 (.xlsm) — 정기/수시·자동/수동을 파일에서 자동 판별' : '수수료 산출근거 엑셀 — 현장별 블록 전체';
-    if (!isCfg) { st.last = null; $('out').hidden = true; }
+    if (!isCfg && !isWork) { st.last = null; $('out').hidden = true; }
   };
   $$('[data-co]').forEach((b) => on(b, 'click', () => { if (st.busy) return; st.view = b.dataset.co; applyView(); }));
+
+  // ── 분기 작업 (지연 시작)
+  let work = null, workStarting = false;
+  async function startWork() {
+    if (work || workStarting) return;
+    workStarting = true;
+    try {
+      await ensureXlsx(o.assetBase);
+      const store = await pickStore(o);
+      work = mountWorkspace($('work-root'), { store, cfg, user: o.user || '', pdfToText, ensurePdf: () => ensurePdf(o.assetBase), loadWorkbook, onChange: () => { try { o.onWorkChange?.(); } catch (e) { console.error(e); } } });
+    } catch (e) { console.error(e); $('work-root').innerHTML = `<p class="qr-msg err">분기 작업을 시작하지 못했습니다: ${esc(e.message || e)}</p>`; }
+    finally { workStarting = false; }
+  }
 
   // ── 파일
   const refresh = () => { $('run').disabled = st.busy || (!st.est && !st.res.length); };
@@ -211,7 +236,25 @@ export function mountReview(el, opts = {}) {
     $('cfg-industry').value = cfg.industry === '건설업' ? '건설업' : '기타';
     $('cfg-haz').value = JSON.stringify(cfg.hazardAliases, null, 2);
     $('cfg-met').value = JSON.stringify(cfg.methodAliases, null, 2);
-    msg('');
+    msg(''); contractInfo();
+  }
+  const contractInfo = () => {
+    for (const c of ['gyeryong', 'hanwha']) {
+      const k = cfg.companies[c]?.contract; const n = k ? (k.base?.length || 0) : 0, m = k ? Object.keys(k.methods || {}).length : 0;
+      $(`contract-info-${c}`).textContent = k && (n || m) ? `등록됨 — 기본관리비 ${n}구간 · 분석수수료 ${m}종` : '등록 안 됨 (견적 파일 안의 단가표 기준으로 검증)';
+    }
+  };
+  for (const c of ['gyeryong', 'hanwha']) {
+    on($(`contract-${c}`), 'change', async (e) => {
+      const f = e.target.files[0]; e.target.value = ''; if (!f) return;
+      try {
+        await ensureXlsx(o.assetBase);
+        const contract = extractContract(loadWorkbook(await f.arrayBuffer()));
+        const next = mergeConfig({}, cfg); next.companies[c].contract = contract;
+        if (applyConfig(next)) { contractInfo(); msg(`${COMPANIES[c][0]} 계약 단가표를 저장했습니다.`, 'ok'); }
+      } catch (err) { msg('계약 단가표를 읽지 못했습니다: ' + err.message, 'err'); }
+    });
+    on($(`contract-clear-${c}`), 'click', () => { const next = mergeConfig({}, cfg); delete next.companies[c].contract; if (applyConfig(next)) { contractInfo(); msg('계약 단가표 기준을 삭제했습니다.', 'ok'); } });
   }
   const msg = (t, kind = '') => { const m = $('cfg-msg'); m.textContent = t; m.className = 'qr-msg ' + kind; };
   function readConfigForm() {
@@ -229,7 +272,7 @@ export function mountReview(el, opts = {}) {
   function applyConfig(next) {
     const errs = validateConfig(next);
     if (errs.length) { msg(errs[0] + (errs.length > 1 ? ` (외 ${errs.length - 1}건)` : ''), 'err'); return false; }
-    cfg = next;
+    cfg = next; work?.ws.setConfig(cfg);
     const saved = store.set(o.storageKey, cfg);
     try { o.onConfigChange?.(JSON.parse(JSON.stringify(cfg))); } catch (e) { console.error('onConfigChange', e); }
     msg(saved || !o.storageKey ? '저장했습니다.' : '적용했지만 브라우저 저장소에는 저장하지 못했습니다.', 'ok');
@@ -239,7 +282,7 @@ export function mountReview(el, opts = {}) {
     let next; try { next = readConfigForm(); } catch (e) { msg('별칭 JSON 형식 오류: ' + e.message, 'err'); return; }
     applyConfig(next);
   });
-  on($('cfg-reset'), 'click', () => { store.del(o.storageKey); cfg = mergeConfig({}); try { o.onConfigChange?.(JSON.parse(JSON.stringify(cfg))); } catch (e) { console.error(e); } fillConfig(); msg('기본값으로 되돌렸습니다.', 'ok'); });
+  on($('cfg-reset'), 'click', () => { store.del(o.storageKey); cfg = mergeConfig({}); work?.ws.setConfig(cfg); try { o.onConfigChange?.(JSON.parse(JSON.stringify(cfg))); } catch (e) { console.error(e); } fillConfig(); msg('기본값으로 되돌렸습니다.', 'ok'); });
   on($('cfg-export'), 'click', () => {
     const a = document.createElement('a');
     a.href = URL.createObjectURL(new Blob([JSON.stringify(cfg, null, 2)], { type: 'application/json' }));
@@ -254,7 +297,8 @@ export function mountReview(el, opts = {}) {
   applyView();
   return {
     getConfig: () => JSON.parse(JSON.stringify(cfg)),
-    setConfig(next) { cfg = mergeConfig(next ?? {}); if (st.view === 'config') fillConfig(); },
+    setConfig(next) { cfg = mergeConfig(next ?? {}); work?.ws.setConfig(cfg); if (st.view === 'config') fillConfig(); },
+    getWorkspace: () => work,
     getResult: () => st.last,
     destroy() { st.destroyed = true; el.innerHTML = ''; el.classList.remove('qr', 'qr-auto-dark'); },
   };

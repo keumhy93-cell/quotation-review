@@ -8,9 +8,11 @@
     "test": "node --test test/*.test.mjs",
     "serve": "node scripts/serve.mjs",
     "build": "node scripts/build.mjs",
-    "check": "npm test && npm run build"
+    "check": "npm test && npm run build",
+    "serve:team": "node server/server.mjs --static dist --data ./data"
   },
   "dependencies": {
+    "jszip": "^3.10.2",
     "pdfjs-dist": "^3.11.174",
     "xlsx": "^0.18.5"
   },

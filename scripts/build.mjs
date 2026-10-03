@@ -39,7 +39,7 @@ await writeFile('dist/index.html', `<!doctype html>
 <div id="app"></div>
 <script type="module">
   import { mountReview } from './quotation-review.js';
-  mountReview(document.getElementById('app'), { company: 'hyundai' });
+  mountReview(document.getElementById('app'));
 </script>
 </body>
 </html>

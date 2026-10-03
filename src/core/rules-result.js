@@ -114,3 +114,20 @@ export function compareResultToEstimate(resList, est, aliases = {}) {
   out.push(F(ta === tb ? 'info' : 'error', '결과서↔견적서', `총 측정건수: 견적서 ${ta} / 결과서 ${tb}${ta === tb ? ' (일치)' : ''}`));
   return out;
 }
+
+/** 현대: 견적서 재료비 세부산출표의 유해인자 ↔ 결과서의 대상유해인자(물리인자 제외) 누락/과다 */
+export function compareMaterialToResult(est, resList, aliases = {}) {
+  const out = [];
+  const resNames = new Map();
+  for (const res of resList) {
+    if (res.kind === 'pdf') for (const p of res.plan) { if (!p.physical) resNames.set(canonHazard(p.hazard, aliases), p.hazard); }
+    else for (const r of res.rows || []) for (const h of r.hazards) if (!/소음|진동|조도|고열|자외선|전자파/.test(h)) resNames.set(canonHazard(h, aliases), h);
+  }
+  const matNames = new Map();
+  for (const m of est.material || []) if (!m.blank) for (const h of m.hazards || [m.hazard]) matNames.set(canonHazard(h, aliases), String(h).split('/')[0].trim());
+  if (!resNames.size || !matNames.size) return out;
+  for (const [k, n] of resNames) if (!matNames.has(k)) out.push(F('error', '재료비↔결과서', `결과서 대상 유해인자 '${n}' 가 견적서 재료비 세부산출표에 없습니다 (재료비 누락).`));
+  for (const [k, n] of matNames) if (!resNames.has(k)) out.push(F('warn', '재료비↔결과서', `견적서 재료비에 있는 '${n}' 가 결과서 대상 유해인자에 없습니다 (결과서 누락 또는 과다 견적).`));
+  if (!out.length) out.push(F('info', '재료비↔결과서', `재료비 세부산출표와 결과서 대상 유해인자가 일치합니다 (${matNames.size}종).`));
+  return out;
+}

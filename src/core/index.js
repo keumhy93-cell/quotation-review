@@ -2,7 +2,7 @@ import { parseResult } from './parsers.js';
 import { parseHyundai, parseSubmission, reviewHyundai, reviewSubmission } from './hyundai.js';
 import { parseUnitPrice, reviewUnitPrice, compareBlockToResult, findBlock, blockGroups } from './unitprice.js';
 import { parseResultText, reviewResultPdf } from './result-pdf.js';
-import { reviewResult, reviewResultSet, compareResultToEstimate } from './rules-result.js';
+import { reviewResult, reviewResultSet, compareResultToEstimate, compareMaterialToResult } from './rules-result.js';
 import { DEFAULT_CONFIG, mergeConfig } from './config.js';
 import { finding as F } from './util.js';
 
@@ -28,7 +28,7 @@ export function runReview({ company, type, estimateWb, submissionWb, results = [
     est = safe('견적서 읽기', () => (hyundai ? parseHyundai(estimateWb) : parseUnitPrice(estimateWb)), null);
     if (!est) fail('estimate', '견적서 읽기');
     else {
-      res.estimate = safe('견적서 검토', () => (hyundai ? reviewHyundai(est, cfg, type) : reviewUnitPrice(est, cfg)), []);
+      res.estimate = safe('견적서 검토', () => (hyundai ? reviewHyundai(est, cfg, type) : reviewUnitPrice(est, cfg, company)), []);
       if (res._failed?.includes('견적서 검토')) fail('estimate', '견적서 검토');
       res.estimateStats = res.estimate.stats;
     }
@@ -55,6 +55,7 @@ export function runReview({ company, type, estimateWb, submissionWb, results = [
       const out = [];
       if (hyundai) {
         out.push(...compareResultToEstimate(parsed, est, al));
+        out.push(...compareMaterialToResult(est, parsed, al));
         for (const p of parsed.filter((x) => x.kind === 'pdf')) {
           if (p.cover.period && est.period && p.cover.period !== est.period) out.push(F('error', '결과서↔견적서', `견적 ${est.period} / 결과서 ${p.cover.period} (${p.file})`));
           const laborN = est.labor?.persons?.v;
