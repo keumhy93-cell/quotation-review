@@ -104,6 +104,8 @@ export function parseHyundai(wb, opt = {}) {
     p.direct = r >= 0 ? { row: r + 1, ...firstNumRight(direct, r) } : null;
     const below = (re) => { for (let r = 0; r < direct.rows.length; r++) { const c = (direct.rows[r] || []).findIndex((v) => typeof v === 'string' && re.test(v)); if (c >= 0) return toNum(direct.rows[r + 1]?.[c]); } return null; };
     p.travel = below(/^출장여비\(/); p.depreciation = below(/^감가상각비\(/);
+    const rate = (re) => { for (let r = 0; r < direct.rows.length; r++) { const c = (direct.rows[r] || []).findIndex((v) => typeof v === 'string' && re.test(v)); if (c >= 0) { const f = direct.formula(r + 1, c) || ''; const m = f.match(/\*\s*([0-9.]+)/) || String(direct.rows[r][c]).match(/([0-9.]+)\s*%/); if (m) return /%/.test(m[0]) && !/\*/.test(m[0]) ? Number(m[1]) / 100 : Number(m[1]); } } return null; };
+    p.rates = { travel: rate(/^출장여비\(/), dep: rate(/^감가상각비\(/) };
     const r2 = labelRow(direct, '합계');
     p.directMat = r2 >= 0 ? { row: r2 + 1, ...firstNumRight(direct, r2) } : null;
   }
@@ -119,8 +121,14 @@ export function parseHyundai(wb, opt = {}) {
   p.priceTable = new Map();
   if (jaejip) {
     const h = findHeader(jaejip.rows, { name: ['유해인자'], measure: ['측정'], analysis: ['분석'] }, 2);
+    p.priceRows = {};
     if (h) for (let r = h.row + 1; r < jaejip.rows.length; r++) {
-      const v = jaejip.rows[r]?.[h.cols.name]; if (v) { p.priceTable.set(norm(v), true); p.priceTable.set(short(v), true); }
+      const v = jaejip.rows[r]?.[h.cols.name]; if (v) {
+        p.priceTable.set(norm(v), true); p.priceTable.set(short(v), true);
+        // 측정·분석(개별)·분석(중복)·계·수정재료비·시약및소모품비 — 재료비산출표가 VLOOKUP 으로 쓰는 값
+        const vals = [1, 2, 3, 4, 5, 6].map((k) => toNum(jaejip.rows[r][h.cols.name + k]));
+        if (vals.some((x) => x != null)) p.priceRows[String(v).trim()] = vals.map((x) => x ?? 0);
+      }
     }
   }
 
@@ -205,6 +213,17 @@ export function reviewHyundai(p, cfg, typeOverride) {
     if (!exp) out.push(F('info', '설정 필요', `${period} 노임단가 기준이 설정되지 않아 건너뜀`));
     else for (const r of p.labor.rates) if (exp[r.grade] != null && r.price !== exp[r.grade]) out.push(F('error', '노임단가', `${period} ${r.grade} 노임단가 ${won(r.price)} ≠ 기준 ${won(exp[r.grade])}`, `인건비 ${r.row}행`));
   }
+
+  // 3-2) 직접경비 요율(출장여비·감가상각비) 과 금액
+  const cr = co.travelRate, dr = co.depRate, labor0 = g.labor?.v;
+  if (p.rates && labor0 != null) {
+    for (const [k, label, exp, val] of [['travel', '출장여비', cr, p.travel], ['dep', '감가상각비', dr, p.depreciation]]) {
+      if (exp != null && p.rates[k] != null && p.rates[k] !== exp) out.push(F('error', '직접경비 요율', `${label} 요율 ${p.rates[k]} ≠ 기준 ${exp}`));
+      if (exp != null && val != null && Math.abs(val - labor0 * exp) > 1) out.push(F('error', '직접경비 요율', `${label} ${won(Math.round(val))}원 ≠ 직접인건비 ${won(labor0)} × ${exp} = ${won(Math.round(labor0 * exp))}원`));
+    }
+  }
+  // 3-3) 등록된 연도별 재료비단가표와 견적 파일의 재료비단가표(별4.재집) 대조
+  if (cfg.materialPrices && p.priceRows) reviewMaterialPrices(p, cfg.materialPrices, out);
 
   // 4) 방법명 ↔ 인건비 집계 조건(SUMIF) 일치: 공백·오타가 있으면 인건비 집계에서 빠진다
   //    계획서 측정방법 칸에는 물리인자는 측정기기명(소음노출량계…), 화학인자는 분석방법(AAS(다성분)…)이 들어간다
@@ -412,4 +431,26 @@ export function reviewSubmission(sub, est) {
   for (const d of diffMaps(ma, mb)) out.push(F('error', '재료비 불일치', `${d.a ? '견적서에만' : '제출용에만'} 있는 행: ${d.key.replaceAll('|', ' | ')}`));
   if (!out.length) out.push(F('info', '제출용', '제출용 엑셀이 견적서와 일치합니다.'));
   return out;
+}
+
+const COLS = ['측정', '분석(개별)', '분석(중복)', '계', '수정재료비', '시약·소모품'];
+/** 견적 파일의 별4.재집 ↔ 등록 단가표: 이 견적에서 쓴 유해인자의 차이는 오류, 안 쓴 인자의 차이는 요약 주의 */
+function reviewMaterialPrices(p, master, out) {
+  const m = new Map(Object.entries(master).map(([k, v]) => [norm(k), { name: k, v }]));
+  const used = new Set([...p.material, ...p.plan].flatMap((r) => r.hazards || []).map((h) => norm(h)));
+  const usedShort = new Set([...used].map((h) => norm(String(h).split('/')[0])));
+  let unusedDiff = 0, matched = 0;
+  for (const [name, vals] of Object.entries(p.priceRows)) {
+    const hit = m.get(norm(name)); if (!hit) continue;
+    matched++;
+    const diffs = COLS.map((c, i) => [c, vals[i], hit.v[i]]).filter(([, a, b]) => a !== b);
+    if (!diffs.length) continue;
+    const isUsed = used.has(norm(name)) || usedShort.has(norm(name.split('/')[0]));
+    if (isUsed) out.push(F('error', '재료비 단가표', `${name}: 견적 파일의 재료비단가가 등록된 단가와 다릅니다 — ${diffs.slice(0, 3).map(([c, a, b]) => `${c} ${won(a)} (등록 ${won(b)})`).join(', ')}`));
+    else unusedDiff++;
+  }
+  if (unusedDiff) out.push(F('warn', '재료비 단가표', `견적 파일의 재료비단가표에서 이 견적에 쓰지 않은 유해인자 ${unusedDiff}종의 단가가 등록 단가와 다릅니다 (오래된 단가표 파일일 수 있음).`));
+  if (!matched) out.push(F('warn', '재료비 단가표', '견적 파일의 재료비단가표와 등록 단가표에서 이름이 같은 유해인자를 찾지 못했습니다.'));
+  // 이 견적에서 쓴 인자가 등록 단가표에 없음
+  for (const r of p.material) for (const h of r.hazards || []) if (!m.has(norm(h)) && ![...m.keys()].some((k) => k === norm(h) || k.startsWith(norm(String(h).split('/')[0]) + '/'))) { out.push(F('warn', '재료비 단가표', `${h}: 등록된 재료비단가표에 없는 유해인자입니다.`)); break; }
 }

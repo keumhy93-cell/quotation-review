@@ -25,6 +25,9 @@ import { loadWorkbook } from '../src/core/read.js';
 import { useXLSX } from '../src/core/xlsx.js';
 import { pdfToText } from './pdf-text.js';
 import { mountWorkspace, pickStore } from './workspace-ui.js';
+import { mountPrices } from './price-ui.js';
+import { Workspace } from '../src/core/workspace.js';
+import { applyPriceBook } from '../src/core/pricebook.js';
 import { CSS } from './widget-style.js';
 
 const COMPANIES = { hyundai: ['현대건설', '품셈'], gyeryong: ['계룡건설', '단가제'], hanwha: ['한화건설', '단가제'] };
@@ -78,10 +81,12 @@ export function mountReview(el, opts = {}) {
   el.innerHTML = `
     <nav class="qr-tabs" data-r="tabs">
       <button data-co="work">분기 작업</button>
+      <button data-co="price">단가 등록</button>
       ${o.companies.map((c) => `<button data-co="${c}">빠른 검토 · ${COMPANIES[c][0]}</button>`).join('')}
       ${o.showConfig ? '<button data-co="config" class="qr-right">기준 관리</button>' : ''}
     </nav>
     <section data-r="work" hidden><div data-r="work-root"><p class="qr-mute">불러오는 중…</p></div></section>
+    <section data-r="price" hidden><div data-r="price-root"><p class="qr-mute">불러오는 중…</p></div></section>
     <section data-r="review">
       <div class="qr-card">
         <h2>1. 파일 올리기</h2>
@@ -94,6 +99,7 @@ export function mountReview(el, opts = {}) {
           <label>견적 유형 <select data-r="type"><option value="">파일에서 자동 판별</option><option>정기자동</option><option>수시자동</option><option>정기수동</option><option>수시수동</option></select></label>
           <span class="qr-mute">선택한 유형과 파일 내용이 다르면 오류로 표시합니다.</span>
         </div>
+        <div class="qr-row"><label>단가 기준 연도 <select data-r="qyear"><option value="auto">등록된 최신 연도</option></select></label><span class="qr-mute">「단가 등록」에서 올린 해당 연도 단가표로 검토합니다 (없으면 기준 관리 값).</span></div>
         <div class="qr-row"><button class="primary" data-r="run" disabled>검토 실행</button><span class="qr-mute" data-r="status" role="status"></span></div>
       </div>
       <div data-r="out" hidden>
@@ -132,27 +138,48 @@ export function mountReview(el, opts = {}) {
   // ── 탭
   const applyView = () => {
     $$('[data-co]').forEach((b) => b.classList.toggle('on', b.dataset.co === st.view));
-    const isCfg = st.view === 'config', isWork = st.view === 'work';
-    $('review').hidden = isCfg || isWork; $('config').hidden = !isCfg; $('work').hidden = !isWork;
+    const isCfg = st.view === 'config', isWork = st.view === 'work', isPrice = st.view === 'price';
+    $('review').hidden = isCfg || isWork || isPrice; $('config').hidden = !isCfg; $('work').hidden = !isWork; $('price').hidden = !isPrice;
     if (isCfg) fillConfig();
     if (isWork) startWork();
+    if (isPrice) startPrice();
+    if (!isCfg && !isWork && !isPrice) fillYears();
     $$('[data-only]').forEach((n) => { n.hidden = n.dataset.only !== st.view; });
     $('hint-est').textContent = st.view === 'hyundai' ? '표준품셈 견적서 (.xlsm) — 정기/수시·자동/수동을 파일에서 자동 판별' : '수수료 산출근거 엑셀 — 현장별 블록 전체';
-    if (!isCfg && !isWork) { st.last = null; $('out').hidden = true; }
+    if (!isCfg && !isWork && !isPrice) { st.last = null; $('out').hidden = true; }
   };
   $$('[data-co]').forEach((b) => on(b, 'click', () => { if (st.busy) return; st.view = b.dataset.co; applyView(); }));
 
-  // ── 분기 작업 (지연 시작)
-  let work = null, workStarting = false;
-  async function startWork() {
-    if (work || workStarting) return;
-    workStarting = true;
-    try {
+  // ── 저장소·작업 흐름(분기 작업·단가 등록·빠른 검토가 함께 씀) — 처음 필요할 때 만든다
+  let core = null, coreP = null, work = null, price = null;
+  function ensureCore() {
+    coreP ||= (async () => {
       await ensureXlsx(o.assetBase);
       const store = await pickStore(o);
-      work = mountWorkspace($('work-root'), { store, cfg, user: o.user || '', pdfToText, ensurePdf: () => ensurePdf(o.assetBase), loadWorkbook, onChange: () => { try { o.onWorkChange?.(); } catch (e) { console.error(e); } } });
-    } catch (e) { console.error(e); $('work-root').innerHTML = `<p class="qr-msg err">분기 작업을 시작하지 못했습니다: ${esc(e.message || e)}</p>`; }
-    finally { workStarting = false; }
+      const ws = new Workspace({ store, user: o.user || '', cfg, pdfToText: async (buf) => { await ensurePdf(o.assetBase); return pdfToText(buf); } });
+      try { ws.setUser(localStorage.getItem('qr-user') || o.user || ''); } catch { /* 무시 */ }
+      core = { store, ws }; return core;
+    })().catch((e) => { coreP = null; throw e; });
+    return coreP;
+  }
+  async function startWork() {
+    if (work) return;
+    try { const { store, ws } = await ensureCore(); if (!work) work = mountWorkspace($('work-root'), { ws, store, onChange: () => { try { o.onWorkChange?.(); } catch (e) { console.error(e); } } }); }
+    catch (e) { console.error(e); $('work-root').innerHTML = `<p class="qr-msg err">분기 작업을 시작하지 못했습니다: ${esc(e.message || e)}</p>`; }
+  }
+  async function startPrice() {
+    if (price) { price.reload().catch(() => {}); return; }
+    try { const { ws } = await ensureCore(); if (!price) price = mountPrices($('price-root'), { ws, loadWorkbook }); }
+    catch (e) { console.error(e); $('price-root').innerHTML = `<p class="qr-msg err">단가 등록을 시작하지 못했습니다: ${esc(e.message || e)}</p>`; }
+  }
+
+  async function fillYears() {
+    try {
+      const book = await (await ensureCore()).ws.getPriceBook();
+      const sel = $('qyear'), cur = sel.value;
+      sel.innerHTML = '<option value="auto">등록된 최신 연도</option>' + Object.keys(book.years).sort().reverse().map((y) => `<option value="${y}">${y}년</option>`).join('');
+      if ([...sel.options].some((x) => x.value === cur)) sel.value = cur;
+    } catch { /* 저장소를 못 쓰면 기본 설정으로 검토 */ }
   }
 
   // ── 파일
@@ -188,7 +215,16 @@ export function mountReview(el, opts = {}) {
         else results.push({ name: f.name, wb: loadWorkbook(await readBuf(f)) });
       }
       say('검토 중…'); await tick();
-      st.last = runReview({ company: st.view, type: $('type').value || undefined, estimateWb, submissionWb, results, cfg });
+      // 등록된 연도별 단가표가 있으면 적용 (노임단가·계수·재료비단가·계약단가)
+      let useCfg = cfg, notes = [];
+      try {
+        const book = await (await ensureCore()).ws.getPriceBook();
+        const years = Object.keys(book.years).sort();
+        const pick = $('qyear').value === 'auto' ? years[years.length - 1] : $('qyear').value;
+        if (pick) ({ cfg: useCfg, notes } = applyPriceBook(cfg, book, st.view, pick));
+      } catch (e) { console.warn('단가표를 불러오지 못해 기본 설정으로 검토합니다.', e); }
+      st.last = runReview({ company: st.view, type: $('type').value || undefined, estimateWb, submissionWb, results, cfg: useCfg });
+      for (const n of notes.reverse()) st.last.estimate.unshift({ severity: 'info', category: '단가표', message: n, where: '' });
       render(); say('');
       try { o.onResult?.(st.last); } catch (e) { console.error('onResult', e); }
     } catch (e) {
@@ -272,7 +308,7 @@ export function mountReview(el, opts = {}) {
   function applyConfig(next) {
     const errs = validateConfig(next);
     if (errs.length) { msg(errs[0] + (errs.length > 1 ? ` (외 ${errs.length - 1}건)` : ''), 'err'); return false; }
-    cfg = next; work?.ws.setConfig(cfg);
+    cfg = next; core?.ws.setConfig(cfg);
     const saved = store.set(o.storageKey, cfg);
     try { o.onConfigChange?.(JSON.parse(JSON.stringify(cfg))); } catch (e) { console.error('onConfigChange', e); }
     msg(saved || !o.storageKey ? '저장했습니다.' : '적용했지만 브라우저 저장소에는 저장하지 못했습니다.', 'ok');
@@ -282,7 +318,7 @@ export function mountReview(el, opts = {}) {
     let next; try { next = readConfigForm(); } catch (e) { msg('별칭 JSON 형식 오류: ' + e.message, 'err'); return; }
     applyConfig(next);
   });
-  on($('cfg-reset'), 'click', () => { store.del(o.storageKey); cfg = mergeConfig({}); work?.ws.setConfig(cfg); try { o.onConfigChange?.(JSON.parse(JSON.stringify(cfg))); } catch (e) { console.error(e); } fillConfig(); msg('기본값으로 되돌렸습니다.', 'ok'); });
+  on($('cfg-reset'), 'click', () => { store.del(o.storageKey); cfg = mergeConfig({}); core?.ws.setConfig(cfg); try { o.onConfigChange?.(JSON.parse(JSON.stringify(cfg))); } catch (e) { console.error(e); } fillConfig(); msg('기본값으로 되돌렸습니다.', 'ok'); });
   on($('cfg-export'), 'click', () => {
     const a = document.createElement('a');
     a.href = URL.createObjectURL(new Blob([JSON.stringify(cfg, null, 2)], { type: 'application/json' }));
@@ -297,8 +333,8 @@ export function mountReview(el, opts = {}) {
   applyView();
   return {
     getConfig: () => JSON.parse(JSON.stringify(cfg)),
-    setConfig(next) { cfg = mergeConfig(next ?? {}); work?.ws.setConfig(cfg); if (st.view === 'config') fillConfig(); },
-    getWorkspace: () => work,
+    setConfig(next) { cfg = mergeConfig(next ?? {}); core?.ws.setConfig(cfg); if (st.view === 'config') fillConfig(); },
+    getWorkspace: () => core?.ws || null,
     getResult: () => st.last,
     destroy() { st.destroyed = true; el.innerHTML = ''; el.classList.remove('qr', 'qr-auto-dark'); },
   };

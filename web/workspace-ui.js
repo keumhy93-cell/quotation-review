@@ -2,7 +2,7 @@
  * 분기 작업 화면. 위젯(widget.js)의 '분기 작업' 탭에서 쓴다.
  * 흐름: 작업 열기(건설사+기간) → 기관별 파일 업로드·검토 → 누락 알림 응답 → 오류 요약 → 수정본 → 이력 → 확정 → 취합·ZIP 다운로드
  */
-import { Workspace, COMPANY_LABEL, summarizeProject, missingKey } from '../src/core/workspace.js';
+import { COMPANY_LABEL, summarizeProject, missingKey } from '../src/core/workspace.js';
 import { buildBundle, summaryWorkbook } from '../src/core/bundle.js';
 import { statusToWorkbook } from '../src/core/status.js';
 import { usageToWorkbook } from '../src/core/usage.js';
@@ -48,10 +48,8 @@ export async function pickStore(opts = {}) {
   const m = new MemoryStore(); m.volatile = true; return m;
 }
 
-export function mountWorkspace(root, { store, cfg, pdfToText, ensurePdf, loadWorkbook, user = '', onChange }) {
-  const ws = new Workspace({ store, user, cfg, pdfToText: async (buf) => { await ensurePdf(); return pdfToText(buf); } });
+export function mountWorkspace(root, { ws, store, onChange }) {
   const ui = { company: 'hyundai', period: '', mode: 'quarter', project: null, pending: [], busy: false, open: new Set(), recent: [], msg: '', msgKind: '', skipDup: false, selectedHalf: new Set(), includeEstimates: true, preview: null };
-  try { ws.setUser(localStorage.getItem('qr-user') || user); } catch { /* 무시 */ }
   const userName = () => ws.user;
 
   const $ = (sel) => root.querySelector(sel);
@@ -163,7 +161,7 @@ export function mountWorkspace(root, { store, cfg, pdfToText, ensurePdf, loadWor
   }
 
   // ── 동작
-  async function refreshRecent() { try { ui.recent = (await store.listProjects()).sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt))); } catch { ui.recent = []; } }
+  async function refreshRecent() { try { ui.recent = (await store.listProjects()).filter((x) => !String(x.id).startsWith('__')).sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt))); } catch { ui.recent = []; } }
   async function reload() { if (ui.project) ui.project = await store.getProject(ui.project.id); await refreshRecent(); render(); onChange?.(); }
 
   async function openProject(company, period) {

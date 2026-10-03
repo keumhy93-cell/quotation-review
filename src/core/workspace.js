@@ -15,6 +15,9 @@ import { diffFindings, diffFiles, countSeverity } from './history.js';
 import { summarizeProject, currentRev, latestRev, missingKey, summaryRows } from './summary.js';
 import { mergeConfig } from './config.js';
 import { loadWorkbook } from './read.js';
+import { emptyBook, applyPriceBook, yearOf, mergeCompany, validateYear, COMPANY_NAME } from './pricebook.js';
+
+export const BOOK_ID = '__pricebook__';
 
 export const COMPANY_LABEL = { hyundai: '현대건설', gyeryong: '계룡건설', hanwha: '한화건설' };
 export const projectId = (company, period) => `${company}__${String(period).trim().replace(/[\\/:*?"<>|\s]+/g, '-')}`;
@@ -79,19 +82,58 @@ export class Workspace {
   }
 
   /** 검토 실행 → 리비전에 저장할 요약 */
-  async review(company, metas, prepared = [], mode = 'quarter') {
+  async review(company, metas, prepared = [], mode = 'quarter', period = '') {
     const byHash = new Map(prepared.map((p) => [p.hash, p]));
     const files = [];
     for (const m of metas) files.push(await this.materialize(m, byHash.get(m.hash)));
-    const batch = reviewBatch({ company, mode, files, cfg: this.cfg });
+    const { cfg: usedCfg, notes, year } = await this.cfgFor(company, period);
+    const batch = reviewBatch({ company, mode, files, cfg: usedCfg });
+    for (const n of notes) batch.findings.push({ severity: 'info', category: '단가표', message: n, where: '', site: '', file: '' });
     const usage = batch.results.flatMap((r) => usageRowsOf(r, { org: '' }));
     return {
-      mode, at: this.now(), stats: batch.stats, detectedOrg: batch.detectedOrg,
+      mode, at: this.now(), year, stats: batch.stats, detectedOrg: batch.detectedOrg,
       findings: batch.findings.map(compact), missing: batch.missing, skipped: batch.skipped,
       statuses: batch.statuses.filter((s) => s.ok).map((s) => ({ file: s.file, title: s.title, cols: s.cols, template: s.template, sites: s.sites, dataStart: s.dataStart })),
       usage,
       sites: batch.sites.map((s) => ({ name: s.name, files: s.files })),
     };
+  }
+
+  // ── 연도별 단가표 (노임단가·재료비단가·기본관리비·기본단가). 작업과 같은 저장소의 특수 문서에 보관해 공유 서버에서도 함께 쓴다.
+  async getPriceBook() {
+    const d = await this.store.getProject(BOOK_ID);
+    return d ? { years: d.years || {}, events: d.events || [], rev: d.rev } : { ...emptyBook(), rev: 0 };
+  }
+  async cfgFor(company, period) { return applyPriceBook(this.cfg, await this.getPriceBook(), company, yearOf(period, new Date(this.now()))); }
+
+  /** 한 건설사·한 연도 단가를 등록(부분 갱신). incoming 형태는 pricebook.js 참고. 변경 내역을 이력에 남긴다 */
+  async registerPrices({ year, company, incoming, source = '' }) {
+    year = String(year);
+    if (!/^20\d\d$/.test(year)) throw new Error('연도는 2026 같은 4자리로 입력하세요.');
+    if (!COMPANY_NAME[company]) throw new Error('건설사가 올바르지 않습니다.');
+    let changes = [];
+    const saved = await updateProject(this.store, BOOK_ID, (doc) => {
+      const base = doc || { id: BOOK_ID, company: '-', period: '-', title: '연도별 단가표', submissions: [], events: [], decisions: [], years: {}, createdAt: this.now() };
+      const y = (base.years[year] ||= {});
+      const { next, changes: ch } = mergeCompany(company, y[company] || {}, incoming, source);
+      const errs = validateYear({ [company]: next });
+      if (errs.length) throw new Error(errs[0]);
+      changes = ch;
+      if (!ch.length) return null; // 바뀐 게 없으면 저장하지 않음
+      y[company] = next; base.updatedAt = this.now();
+      base.events.push({ ts: this.now(), by: this.user || '(이름 없음)', type: 'price', text: `${year}년 ${COMPANY_NAME[company]} 단가 등록${source ? ` (${source})` : ''}: ${ch.slice(0, 6).join(' / ')}${ch.length > 6 ? ` 외 ${ch.length - 6}건` : ''}` });
+      return base;
+    });
+    return { changes, book: { years: saved?.years || {}, events: saved?.events || [] } };
+  }
+
+  async removePrices({ year, company }) {
+    return updateProject(this.store, BOOK_ID, (doc) => {
+      if (!doc?.years?.[year]?.[company]) return null;
+      delete doc.years[year][company]; if (!Object.keys(doc.years[year]).length) delete doc.years[year];
+      doc.events.push({ ts: this.now(), by: this.user || '(이름 없음)', type: 'price', text: `${year}년 ${COMPANY_NAME[company]} 단가 삭제` });
+      return doc;
+    });
   }
 
   _event(project, e) { project.events.push({ ts: this.now(), by: this.user || '(이름 없음)', ...e }); }
@@ -115,7 +157,7 @@ export class Workspace {
     const existing = proj0.submissions.find((s) => s.org === org);
     if (existing) return this.revise(projectIdStr, existing.id, { files: prepared, note: note || '추가 업로드' });
     const useMode = mode || proj0.mode || 'quarter';
-    const review = await this.review(proj0.company, metas, prepared, useMode);
+    const review = await this.review(proj0.company, metas, prepared, useMode, proj0.period);
     let created;
     const saved = await updateProject(this.store, projectIdStr, (p) => {
       if (p.submissions.some((s) => s.org === org)) throw new Error(`'${org}' 기관이 방금 다른 사용자에 의해 등록되었습니다. 새로고침 후 수정본으로 올려 주세요.`);
@@ -141,7 +183,7 @@ export class Workspace {
       const i = merged.findIndex((m) => keyOf(m) === keyOf(nm));
       if (i >= 0) { replaced.push({ from: merged[i].name, to: nm.name }); merged[i] = nm; } else merged.push(nm);
     }
-    const review = await this.review(proj0.company, merged, files, sub0.revisions[0].review?.mode || proj0.mode || 'quarter');
+    const review = await this.review(proj0.company, merged, files, sub0.revisions[0].review?.mode || proj0.mode || 'quarter', proj0.period);
     const diff = diffFindings(prev.review?.findings || [], review.findings);
     let n;
     const saved = await updateProject(this.store, projectIdStr, (p) => {
@@ -250,4 +292,5 @@ export class Workspace {
   }
 }
 
+export { applyPriceBook, yearOf };
 export { summarizeProject, currentRev, latestRev, missingKey, summaryRows, countSeverity, usageToWorkbook, detectOrg };

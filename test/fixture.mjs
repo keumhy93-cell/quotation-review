@@ -8,7 +8,7 @@ const fin = (ws, maxA) => { ws['!ref'] = `A1:${maxA}`; return ws; };
 export function hyundaiWb({
   period = '정기', mode = '자동', factor = period === '정기' ? 0.8 : 0.55,
   wage = period === '정기' ? [347410, 311177, 260926, 234568] : [260926, 234568, 260926, 234568],
-  plan = [], mat = [], laborMeasure = { 소음노출량계: 0 }, laborAnalysis = {}, persons = 0, hardcodeGap = false, matTotalOverride, manual = null, nego = 0, negoAfter = false, site = null,
+  plan = [], mat = [], laborMeasure = { 소음노출량계: 0 }, laborAnalysis = {}, persons = 0, hardcodeGap = false, matTotalOverride, manual = null, nego = 0, negoAfter = false, site = null, jaejip = null, travelRate = 0.1, depRate = 0.07777,
 } = {}) {
   const wb = XLSX.utils.book_new();
   const add = (n, ws) => XLSX.utils.book_append_sheet(wb, ws, n);
@@ -36,6 +36,8 @@ export function hyundaiWb({
   add(L, fin(l, 'CE121'));
 
   const d = {}; put(d, 'A16', '합계'); put(d, 'U16', matTotalOverride ?? matSum); put(d, 'A19', '직접경비 합계'); put(d, 'U19', Math.round(direct));
+  put(d, 'Y6', `출장여비(직접인건비의 ${travelRate * 100}%)`); put(d, 'Y7', labor * 0.1, `A7*${travelRate}`); put(d, 'A7', labor);
+  put(d, 'Y11', `감가상각비(직접인건비의 ${depRate * 100}%)`); put(d, 'Y12', labor * 0.07777, `A12*${depRate}`); put(d, 'A12', labor);
   add(D, fin(d, 'AV76'));
 
   const m = {};
@@ -53,6 +55,11 @@ export function hyundaiWb({
     manual.forEach((row, i) => row.forEach((v, c) => { if (v != null) put(p, XLSX.utils.encode_cell({ r: 7 + i, c: 7 + c }), v); }));
   }
   add(P, fin(p, 'O1000'));
+  if (jaejip) {
+    const j = {}; ['구분', '유해인자', '측정', '분석', '', '계', '수정재료비', '시약 및 소모품비용'].forEach((h, c) => { if (h) put(j, XLSX.utils.encode_cell({ r: 3, c }), h); });
+    Object.entries(jaejip).forEach(([name, v], i) => { put(j, XLSX.utils.encode_cell({ r: 5 + i, c: 0 }), i + 1); put(j, XLSX.utils.encode_cell({ r: 5 + i, c: 1 }), name); v.forEach((x, k) => put(j, XLSX.utils.encode_cell({ r: 5 + i, c: 2 + k }), x)); });
+    add('별4.재집', fin(j, 'P400'));
+  }
   add(mode === '자동' ? '소음제외 붙여넣기(컨트롤+A)' : '_연동헬퍼', fin({}, 'A1'));
   return wb;
 }
