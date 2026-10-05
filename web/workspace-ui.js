@@ -7,7 +7,7 @@ import { buildBundle, summaryWorkbook } from '../src/core/bundle.js';
 import { statusToWorkbook } from '../src/core/status.js';
 import { usageToWorkbook } from '../src/core/usage.js';
 import { XLSX } from '../src/core/xlsx.js';
-import { IdbStore, HttpStore, MemoryStore } from '../src/store/index.js';
+import { IdbStore, HttpStore, MemoryStore, FsStore, loadFolderHandle, folderPermission } from '../src/store/index.js';
 import { ROLES } from '../src/core/batch.js';
 
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -22,16 +22,39 @@ function download(bytes, name, type = 'application/octet-stream') {
   setTimeout(() => URL.revokeObjectURL(a.href), 4000);
 }
 
-/** 저장소 선택: 서버(공유) → 이 브라우저(IndexedDB) → 메모리 */
+/** 사용자가 고른 저장 위치(이 PC의 브라우저에 기억) */
+export const PREF_KEY = 'qr-store-pref';
+export const getPref = () => { try { return JSON.parse(localStorage.getItem(PREF_KEY) || 'null') || {}; } catch { return {}; } };
+export const setPref = (p) => { try { localStorage.setItem(PREF_KEY, JSON.stringify(p)); } catch { /* 무시 */ } };
+
+const needs = (msg, code) => Object.assign(new Error(msg), { code });
+
+/** 저장소 선택: 사용자가 고른 위치(공유 폴더·서버·이 브라우저) → 없으면 자동(서버 → 이 브라우저 → 메모리) */
 export async function pickStore(opts = {}) {
   const s = opts.store;
   if (s && typeof s === 'object') return s;
   if (s === 'idb') return new IdbStore();
   if (s === 'memory') return new MemoryStore();
-  const tryServer = async (base, token) => {
-    const ctl = new AbortController(); const t = setTimeout(() => ctl.abort(), 2500);
-    try { const r = await fetch(base + '/api/health', { signal: ctl.signal, headers: token ? { 'x-token': token } : {} }); return r; } catch { return null; } finally { clearTimeout(t); }
+  const pref = s ? {} : getPref();
+  const ping = async (base, token) => {
+    const ctl = new AbortController(); const t = setTimeout(() => ctl.abort(), 3500);
+    try { return await fetch(base + '/api/health', { signal: ctl.signal, headers: token ? { 'x-token': token } : {} }); } catch { return null; } finally { clearTimeout(t); }
   };
+  if (pref.kind === 'folder') {
+    const h = await loadFolderHandle();
+    if (!h) throw needs('저장 폴더가 아직 선택되지 않았습니다. 「저장 위치」에서 폴더를 선택하세요.', 'no-folder');
+    if (!(await folderPermission(h))) throw Object.assign(needs('저장 폴더 접근 허용이 필요합니다.', 'needs-permission'), { handle: h });
+    return new FsStore(h);
+  }
+  if (pref.kind === 'server') {
+    const base = (pref.serverUrl || '').replace(/\/$/, '');
+    const r = await ping(base, pref.token || '');
+    if (!r) throw needs(`공유 서버(${base || '같은 주소'})에 연결할 수 없습니다. 주소·네트워크를 확인하거나 「저장 위치」에서 바꾸세요.`, 'server-down');
+    if (r.status === 401) throw needs('서버 접근 토큰이 맞지 않습니다. 「저장 위치」에서 다시 입력하세요.', 'bad-token');
+    return new HttpStore(base, { token: pref.token || '' });
+  }
+  if (pref.kind === 'idb') { const st = new IdbStore(); await st._open(); return st; }
+  const tryServer = ping;
   if (s === 'server' || (!s && /^https?:/.test(location.protocol))) {
     const base = opts.serverUrl || '';
     let token = opts.token || ''; try { token = token || sessionStorage.getItem('qr-token') || ''; } catch { /* 무시 */ }
@@ -49,7 +72,7 @@ export async function pickStore(opts = {}) {
 }
 
 export function mountWorkspace(root, { ws, store, onChange }) {
-  const ui = { company: 'hyundai', period: '', mode: 'quarter', project: null, pending: [], busy: false, open: new Set(), recent: [], msg: '', msgKind: '', skipDup: false, selectedHalf: new Set(), includeEstimates: true, preview: null };
+  const ui = { company: 'hyundai', period: '', mode: 'quarter', project: null, pending: [], busy: false, open: new Set(), recent: [], msg: '', msgKind: '', skipDup: false, selectedHalf: new Set(), includeEstimates: true, preview: null, tab: 'upload' };
   const userName = () => ws.user;
 
   const $ = (sel) => root.querySelector(sel);
@@ -82,19 +105,18 @@ export function mountWorkspace(root, { ws, store, onChange }) {
     if (!ui.project) { body.innerHTML = ''; body.hidden = true; return; }
     body.hidden = false;
     const p = ui.project, sums = summarizeProject(p);
-    body.innerHTML = `
-      ${renderUpload(p)}
-      ${renderErrorSummary(p, sums)}
-      ${renderSubmissions(p, sums)}
-      ${renderAssemble(p)}
-      ${renderHistory(p)}`;
+    const tot = sums.reduce((a, x) => ({ e: a.e + x.counts.error, m: a.m + x.openMissing }), { e: 0, m: 0 });
+    const tabs = [['upload', '파일 올리기', ''], ['summary', '오류 요약', tot.e + tot.m ? `<span class="qr-badge error">${tot.e + tot.m}</span>` : ''], ['subs', '기관별 수정본', `<small>${p.submissions.length}</small>`], ['assemble', '취합·다운로드', ''], ['history', '작업 이력', `<small>${p.events.length}</small>`]];
+    if (!tabs.some((t) => t[0] === ui.tab)) ui.tab = 'upload';
+    const panel = { upload: () => renderUpload(p), summary: () => renderErrorSummary(p, sums) || '<div class="qr-card qr-mute">아직 검토한 기관이 없습니다. 「파일 올리기」에서 먼저 올려 주세요.</div>', subs: () => renderSubmissions(p, sums), assemble: () => renderAssemble(p), history: () => renderHistory(p) }[ui.tab]();
+    body.innerHTML = `<div class="qr-subtabs" role="tablist">${tabs.map(([k, label, badge]) => `<button role="tab" class="${ui.tab === k ? 'on' : ''}" data-act="tab" data-id="${k}">${label} ${badge}</button>`).join('')}</div>${panel}`;
     renderBusy();
   }
 
   function renderUpload(p) {
     const list = ui.pending.map((f, i) => `<tr><td>${esc(f.name)}</td><td><span class="qr-badge ${f.role === 'unknown' ? 'warn' : 'info'}">${esc(ROLES[f.role] || f.role)}</span></td><td class="qr-mute">${esc(f.site || '')}</td><td>${kb(f.size)}</td><td><button data-act="drop-pending" data-i="${i}" title="뺄게요">✕</button></td></tr>`).join('');
     const orgHint = ui.pending.map((f) => f.orgHint).find(Boolean) || '';
-    return `<div class="qr-card"><h2>1. 기관 파일 올리기 <small>${esc(p.title)}</small></h2>
+    return `<div class="qr-card"><h2>기관 파일 올리기 <small>${esc(p.title)}</small></h2>
       <p class="qr-mute">견적서(엑셀·PDF)·결과서(PDF)·실시현황·사업장 제출용 엑셀을 한꺼번에 올리면 종류를 자동으로 구분합니다. 같은 기관이 다시 올리면 수정본(r2, r3…)으로 쌓이고 이전 결과와 비교합니다.</p>
       <div class="qr-row"><label>기관(센터) <input type="text" data-w="org" placeholder="예: 인천센터" value="${esc(ui.orgInput ?? orgHint)}" list="qr-orgs"></label>
         <datalist id="qr-orgs">${p.submissions.map((s) => `<option value="${esc(s.org)}">`).join('')}</datalist>
@@ -114,7 +136,7 @@ export function mountWorkspace(root, { ws, store, onChange }) {
       return `<tr><td><b>${esc(s.org)}</b></td><td>${s.counts.error ? `<span class="qr-badge error">오류 ${s.counts.error}</span>` : '<span class="qr-badge info">오류 0</span>'}</td><td>${s.counts.warn ? `<span class="qr-badge warn">주의 ${s.counts.warn}</span>` : '0'}</td><td>${s.missing.length ? `<span class="qr-badge ${s.openMissing ? 'error' : 'warn'}">누락 ${s.missing.length}${s.openMissing ? ` (미응답 ${s.openMissing})` : ''}</span>` : '0'}</td><td class="qr-mute">${cats || '-'}</td><td>${s.sites.length}현장</td><td><button data-act="toggle-sum" data-id="${esc(s.submissionId)}">${open ? '접기' : '자세히'}</button></td></tr>${detail}`;
     }).join('');
     const tot = sums.reduce((a, s) => ({ e: a.e + s.counts.error, w: a.w + s.counts.warn, m: a.m + s.openMissing }), { e: 0, w: 0, m: 0 });
-    return `<div class="qr-card"><div class="qr-row between"><h2>2. 오류 요약 <small>어느 기관의 어떤 현장이 무엇 때문에 오류인지</small></h2><div class="qr-counts"><span class="qr-pill error">오류 ${tot.e}</span><span class="qr-pill warn">주의 ${tot.w}</span><span class="qr-pill ${tot.m ? 'error' : 'info'}">미응답 누락 ${tot.m}</span></div></div>
+    return `<div class="qr-card"><div class="qr-row between"><h2>오류 요약 <small>어느 기관의 어떤 현장이 무엇 때문에 오류인지</small></h2><div class="qr-counts"><span class="qr-pill error">오류 ${tot.e}</span><span class="qr-pill warn">주의 ${tot.w}</span><span class="qr-pill ${tot.m ? 'error' : 'info'}">미응답 누락 ${tot.m}</span></div></div>
       <div class="qr-body"><table><thead><tr><th>기관</th><th>오류</th><th>주의</th><th>누락</th><th>주요 분류</th><th></th><th></th></tr></thead><tbody>${rows}</tbody></table></div>
       <div class="qr-row"><button data-act="dl-summary">요약 엑셀 저장</button></div></div>`;
   }
@@ -128,7 +150,7 @@ export function mountWorkspace(root, { ws, store, onChange }) {
         ${s.missing.length ? `<button data-act="alerts" data-id="${esc(sub.id)}">누락 응답</button>` : ''}
         ${fin ? `<button data-act="reopen" data-id="${esc(sub.id)}">확정 해제</button>` : `<button class="primary" data-act="finalize" data-id="${esc(sub.id)}">최종 확정</button>`}</td></tr>`;
     }).join('');
-    return `<div class="qr-card"><h2>3. 기관별 업로드·수정본 <small>수정본을 올리면 이전 리비전과 비교해 최종본을 만듭니다</small></h2>
+    return `<div class="qr-card"><h2>기관별 업로드·수정본 <small>수정본을 올리면 이전 리비전과 비교해 최종본을 만듭니다</small></h2>
       <div class="qr-body"><table><thead><tr><th>기관</th><th>리비전</th><th>파일</th><th>상태</th><th></th></tr></thead><tbody>${rows || '<tr><td colspan="5" class="qr-mute">아직 올린 기관이 없습니다.</td></tr>'}</tbody></table></div>
       <input type="file" multiple data-w="revfiles" accept=".xlsx,.xlsm,.xls,.pdf" hidden></div>`;
   }
@@ -142,7 +164,7 @@ export function mountWorkspace(root, { ws, store, onChange }) {
     const prev = merged.ok ? `<div class="qr-body"><table><thead><tr><th class="nw">연번</th><th>현장명</th><th class="nw">구분</th><th class="nw">측정기관</th><th class="nw">최종수수료</th><th>출처</th></tr></thead><tbody>${merged.sites.slice(0, ui.preview ? 500 : 6).map((s) => `<tr><td class="nw">${s.no}</td><td>${esc(s.name)}</td><td class="nw">${esc(s.kind)}</td><td class="nw">${esc(s.org)}</td><td class="nw">${s.fee != null ? Number(s.fee).toLocaleString('ko-KR') : ''}</td><td class="qr-mute">${esc(s.from)}</td></tr>`).join('')}</tbody></table>${merged.sites.length > 6 ? `<button data-act="toggle-preview">${ui.preview ? '접기' : `전체 ${merged.sites.length}현장 보기`}</button>` : ''}</div>` : '<div class="qr-mute">취합할 실시현황이 아직 없습니다.</div>';
     const halfOpts = (ui.recent || []).filter((x) => x.company === p.company && x.id !== p.id).map((x) => `<label class="qr-chk"><input type="checkbox" data-w="half" value="${esc(x.id)}" ${ui.selectedHalf.has(x.id) ? 'checked' : ''}> ${esc(x.period)}</label>`).join(' ');
     const others = (ui.recent || []).filter((x) => x.period === p.period && x.company !== p.company).map((x) => `<label class="qr-chk"><input type="checkbox" data-w="allco" value="${esc(x.id)}"> ${esc(COMPANY_LABEL[x.company] || x.company)}</label>`).join(' ');
-    return `<div class="qr-card"><h2>4. 취합·다운로드</h2>
+    return `<div class="qr-card"><h2>취합·다운로드</h2>
       <div class="qr-stack"><div class="qr-cfg-box"><h3>실시현황 연번 순서 <small>(올린 기관 순서대로 1번부터 — ↑↓로 바꾸면 연번이 다시 매겨집니다)</small></h3><table><tbody>${orderRows}</tbody></table></div>
       <div class="qr-cfg-box"><h3>취합 실시현황 미리보기</h3>${dups}${prev}</div></div>
       <div class="qr-row"><label>제목 <input type="text" data-w="stitle" style="min-width:300px" placeholder="비우면 첫 파일의 제목" value="${esc(ui.statusTitle ?? '')}"></label></div>
@@ -157,7 +179,7 @@ export function mountWorkspace(root, { ws, store, onChange }) {
 
   function renderHistory(p) {
     const rows = [...p.events].reverse().slice(0, 60).map((e) => `<tr><td class="qr-mute nw">${fmtTime(e.ts)}</td><td class="nw">${esc(e.by)}</td><td class="nw"><span class="qr-badge info">${esc(EVENT_LABEL[e.type] || e.type)}</span></td><td>${esc(e.text)}</td></tr>`).join('');
-    return `<div class="qr-card"><h2>5. 작업 이력 <small>${p.events.length}건</small></h2><div class="qr-body"><table><thead><tr><th>일시</th><th>작업자</th><th>구분</th><th>내용</th></tr></thead><tbody>${rows}</tbody></table></div></div>`;
+    return `<div class="qr-card"><h2>작업 이력 <small>${p.events.length}건</small></h2><div class="qr-body"><table><thead><tr><th>일시</th><th>작업자</th><th>구분</th><th>내용</th></tr></thead><tbody>${rows}</tbody></table></div></div>`;
   }
 
   // ── 동작
@@ -168,7 +190,7 @@ export function mountWorkspace(root, { ws, store, onChange }) {
     if (!period.trim()) { toast('기간을 입력하세요 (예: 2026-2분기).', 'err'); return; }
     await busy('작업 여는 중', async () => {
       ui.company = company; ui.period = period.trim(); ui.pending = []; ui.orgInput = undefined;
-      ui.project = null; render(); // 새 작업을 읽는 동안 이전 작업 화면에 잘못 올리지 않도록 비운다
+      ui.tab = 'upload'; ui.project = null; render(); // 새 작업을 읽는 동안 이전 작업 화면에 잘못 올리지 않도록 비운다
       ui.project = await ws.openProject(company, ui.period, { mode: ui.mode });
       await refreshRecent(); ui.msg = ''; render();
     });
@@ -245,7 +267,7 @@ export function mountWorkspace(root, { ws, store, onChange }) {
     let result;
     await busy('검토 중', async () => {
       result = exists ? await ws.revise(ui.project.id, exists.id, { files, note: '수정본 업로드' }) : await ws.submit(ui.project.id, { org, files });
-      ui.pending = []; ui.orgInput = undefined; ui.project = result.project; await refreshRecent(); ui.open.add(result.submission.id); toast('검토를 마쳤습니다.', 'ok'); render(); onChange?.();
+      ui.pending = []; ui.orgInput = undefined; ui.project = result.project; await refreshRecent(); ui.open.add(result.submission.id); ui.tab = 'summary'; toast('검토를 마쳤습니다.', 'ok'); render(); onChange?.();
     });
     if (!result) return;
     if (result.diff) showDiff(result.submission, result.diff, result.rev);
@@ -331,6 +353,7 @@ export function mountWorkspace(root, { ws, store, onChange }) {
     try {
       if (act === 'open') await openProject($('[data-w="company"]').value, $('[data-w="period"]').value);
       else if (act === 'open-recent') { const p = ui.recent.find((x) => x.id === id); if (p) { $('[data-w="company"]').value = p.company; $('[data-w="period"]').value = p.period; await openProject(p.company, p.period); } }
+      else if (act === 'tab') { ui.tab = id; render(); }
       else if (act === 'drop-pending') { ui.pending.splice(Number(b.dataset.i), 1); render(); }
       else if (act === 'submit') await doSubmit();
       else if (act === 'toggle-sum') { ui.open.has(id) ? ui.open.delete(id) : ui.open.add(id); render(); }
@@ -372,7 +395,7 @@ export function mountWorkspace(root, { ws, store, onChange }) {
         <button class="primary" data-act="open">작업 열기·만들기</button></div>
       <div data-w="recent"></div></div>
     <div data-w="project" hidden></div>`;
-  root.querySelector('[data-w="storeinfo"]').textContent = store.kind === 'server' ? '· 공유 서버에 저장 (여러 명이 같은 이력 사용)' : store.volatile ? '· 저장소를 쓸 수 없어 이 탭을 닫으면 사라집니다' : '· 이 브라우저에만 저장됩니다 (여러 명이 쓰려면 공유 서버 필요)';
+  root.querySelector('[data-w="storeinfo"]').textContent = store.kind === 'server' ? '· 공유 서버에 저장 (어느 PC에서든 같은 이력)' : store.kind === 'folder' ? `· 공유 폴더 「${store.label}」에 저장 (같은 폴더를 연결한 PC는 같은 이력)` : store.volatile ? '· 저장소를 쓸 수 없어 이 탭을 닫으면 사라집니다' : '· 이 PC의 브라우저에만 저장됩니다 — 왼쪽 「저장 위치」에서 공유 폴더·서버로 바꾸세요';
   refreshRecent().then(render);
 
   return { ws, ui, reload, openProject, get store() { return store; } };

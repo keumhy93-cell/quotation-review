@@ -5,10 +5,20 @@ export const CSS = `
 @media (prefers-color-scheme:dark){.qr.qr-auto-dark{--bg:#14181f;--card:#1c222c;--ink:#e7ebf2;--mute:#97a1b2;--line:#2e3644;--brand:#6aa3ff;--err:#ff8b90;--warn:#ffc266;--info:#8fb3d6;--errbg:#3a1f23;--warnbg:#3a2f18;--infobg:#1f2b38;--okbg:#1c3324;--ok:#7fd69a}}
 .qr *{box-sizing:border-box}
 .qr [hidden]{display:none!important}
-.qr .qr-tabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px}
-.qr .qr-tabs button{border:1px solid var(--line);background:var(--card);color:var(--ink);padding:8px 14px;border-radius:8px;cursor:pointer;font:inherit}
-.qr .qr-tabs button.on{background:var(--brand);border-color:var(--brand);color:#fff}
-.qr .qr-tabs .qr-right{margin-left:auto}
+.qr .qr-shell{display:grid;grid-template-columns:200px minmax(0,1fr);gap:18px;align-items:start}
+.qr .qr-side{position:sticky;top:8px;display:flex;flex-direction:column;gap:2px;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:10px}
+.qr .qr-side-title{font-weight:700;font-size:15px;padding:6px 10px 8px}
+.qr .qr-side-h{font-size:12px;color:var(--mute);padding:12px 10px 4px;letter-spacing:.02em}
+.qr .qr-side button{border:0;background:transparent;color:var(--ink);padding:9px 12px;border-radius:8px;cursor:pointer;font:inherit;text-align:left}
+.qr .qr-side button:hover{background:var(--bg)}
+.qr .qr-side button.on{background:var(--brand);color:#fff}
+.qr .qr-main{min-width:0}
+.qr .qr-subtabs{display:flex;gap:4px;flex-wrap:wrap;border-bottom:1px solid var(--line);margin:0 0 14px}
+.qr .qr-subtabs button{border:0;border-bottom:3px solid transparent;border-radius:8px 8px 0 0;background:transparent;padding:9px 14px;color:var(--mute)}
+.qr .qr-subtabs button.on{color:var(--brand);border-bottom-color:var(--brand);font-weight:700}
+.qr .qr-opt{display:flex;gap:8px;align-items:center;cursor:pointer}.qr .qr-opt-body{margin:8px 0 0 24px}
+.qr code{background:var(--bg);padding:1px 5px;border-radius:5px}
+@media (max-width:820px){.qr .qr-shell{grid-template-columns:1fr}.qr .qr-side{position:static;flex-direction:row;flex-wrap:wrap;align-items:center}.qr .qr-side-title,.qr .qr-side-h{width:100%}}
 .qr small{color:var(--mute);font-weight:400}
 .qr .qr-card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;margin-bottom:14px}
 .qr h2{font-size:16px;margin:0 0 12px}.qr h3{font-size:14px;margin:0}

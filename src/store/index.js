@@ -2,6 +2,8 @@ import { ConflictError } from './errors.js';
 export { MemoryStore } from './memory.js';
 export { IdbStore } from './idb.js';
 export { HttpStore } from './http.js';
+export { FsStore, saveFolderHandle, loadFolderHandle, folderPermission } from './fs.js';
+export { copyStore } from './copy.js';
 export { ConflictError } from './errors.js';
 export { sha256, sha256Sync, textBytes } from './hash.js';
 

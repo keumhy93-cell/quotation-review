@@ -26,6 +26,7 @@ import { useXLSX } from '../src/core/xlsx.js';
 import { pdfToText } from './pdf-text.js';
 import { mountWorkspace, pickStore } from './workspace-ui.js';
 import { mountPrices } from './price-ui.js';
+import { mountStorage } from './storage-ui.js';
 import { Workspace } from '../src/core/workspace.js';
 import { applyPriceBook } from '../src/core/pricebook.js';
 import { CSS } from './widget-style.js';
@@ -79,14 +80,22 @@ export function mountReview(el, opts = {}) {
 
   el.classList.add('qr'); if (o.darkAuto) el.classList.add('qr-auto-dark');
   el.innerHTML = `
-    <nav class="qr-tabs" data-r="tabs">
+    <div class="qr-shell">
+    <aside class="qr-side" data-r="tabs" aria-label="메뉴">
+      <div class="qr-side-title">${esc(o.title || '검토 도구')}</div>
+      <div class="qr-side-h">분기 업무</div>
       <button data-co="work">분기 작업</button>
       <button data-co="price">단가 등록</button>
-      ${o.companies.map((c) => `<button data-co="${c}">빠른 검토 · ${COMPANIES[c][0]}</button>`).join('')}
-      ${o.showConfig ? '<button data-co="config" class="qr-right">기준 관리</button>' : ''}
-    </nav>
+      <div class="qr-side-h">빠른 검토</div>
+      ${o.companies.map((c) => `<button data-co="${c}">${COMPANIES[c][0]}</button>`).join('')}
+      <div class="qr-side-h">설정</div>
+      ${o.showConfig ? '<button data-co="config">기준 관리</button>' : ''}
+      <button data-co="storage">저장 위치</button>
+    </aside>
+    <main class="qr-main">
     <section data-r="work" hidden><div data-r="work-root"><p class="qr-mute">불러오는 중…</p></div></section>
     <section data-r="price" hidden><div data-r="price-root"><p class="qr-mute">불러오는 중…</p></div></section>
+    <section data-r="storage" hidden><div data-r="storage-root"></div></section>
     <section data-r="review">
       <div class="qr-card">
         <h2>1. 파일 올리기</h2>
@@ -130,7 +139,8 @@ export function mountReview(el, opts = {}) {
         </details>
         <div class="qr-row"><button class="primary" data-r="cfg-save">저장</button><button data-r="cfg-reset">기본값으로</button><button data-r="cfg-export">내보내기</button><label class="qr-drop" style="min-height:0;padding:6px 12px;border-style:solid"><span style="color:inherit">가져오기</span><input type="file" data-r="cfg-import" accept=".json,application/json"></label><span class="qr-msg" data-r="cfg-msg" role="status"></span></div>
       </div>
-    </section>`;
+    </section>
+    </main></div>`;
   const $ = (r) => el.querySelector(`[data-r="${r}"]`);
   const $$ = (sel) => el.querySelectorAll(sel);
   const on = (node, ev, fn) => node.addEventListener(ev, fn);
@@ -138,15 +148,16 @@ export function mountReview(el, opts = {}) {
   // ── 탭
   const applyView = () => {
     $$('[data-co]').forEach((b) => b.classList.toggle('on', b.dataset.co === st.view));
-    const isCfg = st.view === 'config', isWork = st.view === 'work', isPrice = st.view === 'price';
-    $('review').hidden = isCfg || isWork || isPrice; $('config').hidden = !isCfg; $('work').hidden = !isWork; $('price').hidden = !isPrice;
+    const isCfg = st.view === 'config', isWork = st.view === 'work', isPrice = st.view === 'price', isStore = st.view === 'storage';
+    $('review').hidden = isCfg || isWork || isPrice || isStore; $('config').hidden = !isCfg; $('work').hidden = !isWork; $('price').hidden = !isPrice; $('storage').hidden = !isStore;
     if (isCfg) fillConfig();
     if (isWork) startWork();
     if (isPrice) startPrice();
-    if (!isCfg && !isWork && !isPrice) fillYears();
+    if (isStore) startStorage();
+    if (!isCfg && !isWork && !isPrice && !isStore) fillYears();
     $$('[data-only]').forEach((n) => { n.hidden = n.dataset.only !== st.view; });
     $('hint-est').textContent = st.view === 'hyundai' ? '표준품셈 견적서 (.xlsm) — 정기/수시·자동/수동을 파일에서 자동 판별' : '수수료 산출근거 엑셀 — 현장별 블록 전체';
-    if (!isCfg && !isWork && !isPrice) { st.last = null; $('out').hidden = true; }
+    if (!isCfg && !isWork && !isPrice && !isStore) { st.last = null; $('out').hidden = true; }
   };
   $$('[data-co]').forEach((b) => on(b, 'click', () => { if (st.busy) return; st.view = b.dataset.co; applyView(); }));
 
@@ -162,15 +173,36 @@ export function mountReview(el, opts = {}) {
     })().catch((e) => { coreP = null; throw e; });
     return coreP;
   }
+  // 저장소를 못 쓸 때(폴더 접근 허용 필요·서버 연결 실패 등): 안내와 함께 해결 버튼을 보여 준다
+  function storeProblem(node, what, e) {
+    console.error(e);
+    node.innerHTML = `<div class="qr-card"><p class="qr-msg err">${what}을(를) 시작하지 못했습니다: ${esc(e.message || e)}</p><div class="qr-row">${e.code === 'needs-permission' ? '<button class="primary" data-fix="allow">저장 폴더 다시 연결(허용)</button>' : ''}<button data-fix="settings">저장 위치 설정 열기</button></div></div>`;
+    node.querySelector('[data-fix="settings"]').onclick = () => { st.view = 'storage'; applyView(); };
+    const allow = node.querySelector('[data-fix="allow"]');
+    if (allow) allow.onclick = async () => { if (await e.handle.requestPermission({ mode: 'readwrite' }) === 'granted') { await resetCore(); applyView(); } };
+  }
   async function startWork() {
     if (work) return;
     try { const { store, ws } = await ensureCore(); if (!work) work = mountWorkspace($('work-root'), { ws, store, onChange: () => { try { o.onWorkChange?.(); } catch (e) { console.error(e); } } }); }
-    catch (e) { console.error(e); $('work-root').innerHTML = `<p class="qr-msg err">분기 작업을 시작하지 못했습니다: ${esc(e.message || e)}</p>`; }
+    catch (e) { storeProblem($('work-root'), '분기 작업', e); }
   }
   async function startPrice() {
     if (price) { price.reload().catch(() => {}); return; }
     try { const { ws } = await ensureCore(); if (!price) price = mountPrices($('price-root'), { ws, loadWorkbook }); }
-    catch (e) { console.error(e); $('price-root').innerHTML = `<p class="qr-msg err">단가 등록을 시작하지 못했습니다: ${esc(e.message || e)}</p>`; }
+    catch (e) { storeProblem($('price-root'), '단가 등록', e); }
+  }
+  let storageUi = null;
+  function startStorage() {
+    if (storageUi) { storageUi.reload(); return; }
+    storageUi = mountStorage($('storage-root'), { currentStore: async () => (await ensureCore()).store, onChanged: async () => { await resetCore(); } });
+  }
+  /** 저장 위치가 바뀌면 저장소·작업 화면을 새로 만든다 (저장 위치 화면은 그대로 둔다) */
+  async function resetCore() {
+    coreP = null; core = null; work = null; price = null;
+    // 이전 화면이 달아 둔 이벤트가 새 저장소와 섞이지 않도록 컨테이너 요소째 새로 만든다
+    for (const r of ['work-root', 'price-root']) { const fresh = document.createElement('div'); fresh.dataset.r = r; fresh.innerHTML = '<p class="qr-mute">불러오는 중…</p>'; $(r).replaceWith(fresh); }
+    try { await ensureCore(); } catch { /* 저장 위치 화면이 현재 상태를 보여 준다 */ }
+    storageUi?.reload();
   }
 
   async function fillYears() {

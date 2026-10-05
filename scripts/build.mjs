@@ -27,7 +27,7 @@ await writeFile('dist/index.html', `<!doctype html>
 <style>
   body { margin: 0; background: #f6f7f9; font-family: -apple-system, "Segoe UI", "Noto Sans KR", "Malgun Gothic", sans-serif; }
   @media (prefers-color-scheme: dark) { body { background: #14181f; color: #e7ebf2; } }
-  header, #app { max-width: 1120px; margin: 0 auto; padding: 0 16px; }
+  header, #app { max-width: 1320px; margin: 0 auto; padding: 0 16px; }
   header { padding-top: 20px; } h1 { font-size: 21px; margin: 0; } .sub { margin: 2px 0 14px; color: #667085; font-size: 13px; }
 </style>
 </head>
