@@ -135,3 +135,19 @@ test('반기 병합: 두 분기 프로젝트의 실시현황·결과서를 하�
   const rows = XLSX.utils.sheet_to_json(wb.Sheets['실시현황'], { header: 1, defval: null }).filter((r) => typeof r[0] === 'number');
   assert.deepEqual(rows.map((r) => `${r[0]}:${r[4]}`), ['1:1분기A', '2:1분기B', '3:2분기C']);
 });
+
+test('측정계획서에서 ICP(다성분)가 인자별 별도 시료로 입력되면 건수 합이 부풀어 원인과 함께 지적한다', () => {
+  const unit = { dept: '용접공', people: 2 };
+  const g = (hazards, method, samples, extra = {}) => ({ hazards, method, samples, unit, blank: false, ...extra });
+  const plan = {
+    groups: [g(['소음'], '소음노출량계', 2), g(['산화철분진과흄'], 'ICP', 2), g(['이산화티타늄'], 'ICP', 2), g(['망간및그무기화합물'], 'ICP', 2), g(['망간및그무기화합물', '산화철분진과흄', '이산화티타늄'], 'ICP', 1, { blank: true, unit: { dept: '공시료' } })],
+    material: [{ method: 'ICP', count: 2, blank: false, hazards: ['망간및그무기화합물', '산화철분진과흄', '이산화티타늄'] }, { method: 'ICP', count: 1, blank: true, hazards: ['망간및그무기화합물', '산화철분진과흄', '이산화티타늄'] }],
+  };
+  const pdf = { file: 'e.pdf', labor: { samples: 5, persons: null, methods: [{ id: '4.1.1', label: '소음노출량계', section: 4, count: 2 }, { id: '5.3', label: 'ICP', section: 5, count: 3 }] } };
+  const msg = compareLaborToPlan(pdf, plan).map((f) => f.message).join('\n');
+  assert.match(msg, /5\.3 ICP: 3건 \/ 측정계획서 건수 합 7건 — 원인: \[용접공\] 산화철분진과흄, 이산화티타늄, 망간및그무기화합물 3개 인자가 각각 별도 시료\(2\+2\+2건\)/);
+  assert.match(msg, /전체 시료 수 5건 ≠ 측정계획서 건수 합 9건 .*공시료 1건 포함/);
+  // 병합되어 있으면(첫 행만 건수) 오류 없음
+  plan.groups.splice(1, 3, g(['망간및그무기화합물', '산화철분진과흄', '이산화티타늄'], 'ICP', 2));
+  assert.deepEqual(compareLaborToPlan(pdf, plan), []);
+});

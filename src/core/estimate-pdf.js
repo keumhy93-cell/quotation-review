@@ -105,6 +105,22 @@ export function compareLaborToPlan(pdf, plan, label = '측정계획서') {
     const n = sum(mats.filter((r) => norm(r.method) === norm(m.label)), (r) => r.count);
     if (mats.length && n !== m.count) out.push(F('error', '인건비↔재료비', `견적서 인건비 ${m.id} ${m.label}: ${m.count}건 / 재료비내역서 ${n}건 (공시료 포함)`, pdf.file));
   }
+  // 분석 방법별 세부건수 ↔ 측정계획서 (공시료 포함). 다성분(ICP·…(다성분))은 한 시료로 묶여 건수가 첫 행에만 있어야 한다.
+  //   인자마다 건수를 따로 적으면(병합 누락) 계획서 건수 합이 견적서·재료비보다 부풀어 오른다.
+  // 공시료는 제출용 계획서에는 행으로 있지만 견적 엑셀의 계획서에는 없고 재료비내역서에만 있다 → 계획서에 공시료 행이 없으면 재료비의 공시료 건수로 채운다
+  const planBlankRows = plan.groups.some((g) => g.blank && g.samples > 0);
+  const blankFromMat = (method) => (planBlankRows ? 0 : sum((plan.material || []).filter((r) => r.blank && norm(r.method) === norm(method)), (r) => r.count));
+  const planAllGroups = plan.groups.filter((g) => g.samples > 0);
+  for (const m of ana) {
+    const gs = planAllGroups.filter((g) => norm(g.method) === norm(m.label));
+    const n = sum(gs, (g) => g.samples) + blankFromMat(m.label);
+    if (!gs.length || n === m.count) continue;
+    const multi = /ICP|다성분/.test(m.label);
+    const split = []; // 같은 단위작업·같은 구분(측정/공시료)에서 같은 다성분 방법이 여러 시료로 따로 입력된 곳
+    if (multi) { const by = new Map(); for (const g of gs) { const k = `${g.blank ? '공시료' : g.unit?.dept || ''}`; (by.get(k) || by.set(k, []).get(k)).push(g); } for (const [k, v] of by) if (v.length > 1) split.push([k, v]); }
+    const cause = split.map(([k, v]) => `[${k}] ${v.map((g) => g.hazards.join('+')).join(', ')} ${v.length}개 인자가 각각 별도 시료(${v.map((g) => g.samples).join('+')}건)로 입력됨 — ${m.label} 은(는) 한 시료로 분석되므로 건수는 첫 행에만(${v[0].samples}건) 적고 나머지 행은 건수를 비워 병합해야 합니다`).join(' / ');
+    out.push(F('error', '인건비↔계획서', `견적서 인건비 ${m.id} ${m.label}: ${m.count}건 / ${label} 건수 합 ${n}건${cause ? ` — 원인: ${cause}` : ''}`, pdf.file));
+  }
   // 계획서/재료비에는 있는데 견적서 인건비에 없는 방법
   const physLabels = new Set(phys.map((m) => m.id));
   for (const g of groups) if (!used.has(g) && g.method && !ana.some((m) => norm(m.label) === norm(g.method)) && !phys.some((m) => matches(m, g.method)) && !/^(개인|지역)$/.test(g.method)) {
@@ -116,6 +132,12 @@ export function compareLaborToPlan(pdf, plan, label = '측정계획서') {
   // 전체 시료 수(건수)
   const all = sum(L.methods, (m) => m.count);
   if (L.samples != null && L.samples !== all) out.push(F('error', '인건비 건수', `전체 시료 수 ${L.samples}건 ≠ 방법별 세부건수 합 ${all}건`, pdf.file));
+  const matBlankN = planBlankRows ? 0 : sum((plan.material || []).filter((r) => r.blank), (r) => r.count);
+  const planTotal = sum(planAllGroups, (g) => g.samples) + matBlankN;
+  if (L.samples != null && planTotal !== L.samples) {
+    const physN = sum(planAllGroups.filter((g) => phys.some((m) => matches(m, g.method))), (g) => g.samples);
+    out.push(F('error', '인건비 건수', `전체 시료 수 ${L.samples}건 ≠ ${label} 건수 합 ${planTotal}건 (물리 ${physN}건 + 분석 ${planTotal - physN}건, 공시료 ${sum(planAllGroups.filter((g) => g.blank), (g) => g.samples) + matBlankN}건 포함) — 차이 ${planTotal - L.samples > 0 ? '+' : ''}${planTotal - L.samples}건. 방법별 차이는 바로 위 '인건비↔계획서' 항목을 보세요.`, pdf.file));
+  }
   const planAll = sum(groups.filter((g) => phys.some((m) => matches(m, g.method))), (g) => g.samples) + sum(mats, (r) => r.count);
   if (L.samples != null && mats.length && L.samples !== planAll) out.push(F('error', '인건비 건수', `전체 시료 수 ${L.samples}건 / ${label}(물리 측정) + 재료비내역서(분석, 공시료 포함) ${planAll}건`, pdf.file));
 
