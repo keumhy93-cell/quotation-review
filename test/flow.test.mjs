@@ -151,3 +151,44 @@ test('측정계획서에서 ICP(다성분)가 인자별 별도 시료로 입력�
   plan.groups.splice(1, 3, g(['망간및그무기화합물', '산화철분진과흄', '이산화티타늄'], 'ICP', 2));
   assert.deepEqual(compareLaborToPlan(pdf, plan), []);
 });
+
+test('묶음 규칙: 수산화나트륨은 수산화칼륨과만, 주석(유기화합물)은 단성분이라 묶이면 안 된다', async () => {
+  const { bundleViolations, bundleKey } = await import('../src/core/bundle-rules.js');
+  assert.deepEqual(bundleViolations(['수산화나트륨', '수산화칼륨']), []);
+  assert.deepEqual(bundleViolations(['망간및그무기화합물', '산화철분진과흄', '이산화티타늄']), []);
+  assert.match(bundleViolations(['수산화나트륨', '망간및그무기화합물'])[0], /수산화나트륨 은\(는\) 수산화칼륨 와\(과\)만/);
+  assert.match(bundleViolations(['주석(유기화합물)', '망간및그무기화합물'])[0], /주석\(유기화합물\) 은\(는\) 단성분/);
+  assert.equal(bundleKey(['주석(유기화합물)']), null);
+  assert.equal(bundleKey(['수산화나트륨']), bundleKey(['수산화칼륨']));
+  assert.notEqual(bundleKey(['수산화나트륨']), bundleKey(['망간']));
+});
+
+test('ICP 병합 누락 판단: 병합 후보는 묶일 수 있는 인자끼리만 (주석 단독·수산화나트륨/칼륨 짝 규칙 반영)', () => {
+  const unit = { dept: '용접공', people: 2 };
+  const g = (hazards, samples) => ({ hazards, method: 'ICP', samples, unit, blank: false });
+  const pdf = (n) => ({ file: 'e.pdf', labor: { samples: n, persons: null, methods: [{ id: '5.3', label: 'ICP', section: 5, count: n }] } });
+  // 주석(유기화합물)은 단성분 → 망간과 따로 입력된 것이 정상 (2건 + 2건 = 4건)
+  let plan = { groups: [g(['망간및그무기화합물'], 2), g(['주석(유기화합물)'], 2)], material: [] };
+  assert.deepEqual(compareLaborToPlan(pdf(4), plan), []);
+  // 그런데 견적서 PDF 가 3건이면 차이가 나지만, 주석은 병합 후보가 아니므로 '병합 누락' 원인으로 지목하지 않는다
+  assert.doesNotMatch(compareLaborToPlan(pdf(3), plan).map((f) => f.message).join('\n'), /별도 시료/);
+  // 수산화나트륨·수산화칼륨은 서로 병합 후보 → 따로 입력되면 원인으로 지목
+  plan = { groups: [g(['수산화나트륨'], 2), g(['수산화칼륨'], 2)], material: [] };
+  assert.match(compareLaborToPlan(pdf(2), plan).map((f) => f.message).join('\n'), /수산화나트륨, 수산화칼륨 2개 인자가 각각 별도 시료/);
+  // 수산화나트륨이 망간과 따로 입력된 것은 병합 후보가 아니다 (둘은 묶일 수 없음)
+  plan = { groups: [g(['수산화나트륨'], 2), g(['망간및그무기화합물'], 2)], material: [] };
+  assert.doesNotMatch(compareLaborToPlan(pdf(2), plan).map((f) => f.message).join('\n'), /별도 시료/);
+});
+
+test('reviewBundling: 계획서·재료비내역서에서 규칙을 어긴 묶음을 위치와 함께 오류로 낸다', async () => {
+  const { reviewBundling } = await import('../src/core/hyundai.js');
+  const p = {
+    groups: [{ hazards: ['수산화나트륨', '수산화칼륨'], unit: { dept: 'A' }, sheet: '계획서', rows: [3], blank: false }, { hazards: ['주석(유기화합물)', '망간및그무기화합물'], unit: { dept: 'B' }, sheet: '계획서', rows: [7], blank: false }],
+    material: [{ hazards: ['수산화나트륨', '망간및그무기화합물'], blank: false, sheet: '재료비', row: 5 }],
+  };
+  const f = reviewBundling(p);
+  assert.equal(f.length, 2);
+  assert.ok(f.every((x) => x.severity === 'error' && x.category === '다성분'));
+  assert.ok(f.some((x) => /계획서 \[B\] 주석\(유기화합물\) 은\(는\) 단성분/.test(x.message) && x.where === '계획서 7행'));
+  assert.ok(f.some((x) => /재료비내역서 수산화나트륨/.test(x.message) && x.where === '재료비 5행'));
+});

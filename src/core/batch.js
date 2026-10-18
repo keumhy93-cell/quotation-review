@@ -8,7 +8,7 @@
  */
 import { finding as F, norm } from './util.js';
 import { mergeConfig } from './config.js';
-import { parseHyundai, parseSubmission, reviewHyundai, reviewSubmission } from './hyundai.js';
+import { parseHyundai, parseSubmission, reviewHyundai, reviewSubmission, reviewBundling } from './hyundai.js';
 import { parseUnitPrice, reviewUnitPrice, compareBlockToResult, findBlock, blockGroups } from './unitprice.js';
 import { parseResultText, reviewResultPdf } from './result-pdf.js';
 import { parseResult } from './parsers.js';
@@ -94,7 +94,7 @@ export function reviewBatch({ company, mode = 'quarter', files, cfg: userCfg }) 
       if (pdf) {
         usedPdfs.add(pdf); site.files.push(pdf.file);
         add(site, safe('견적서 PDF 대조', () => compareEstimatePdfToXlsx(pdf, est), []), pdf.file);
-        add(site, safe('인건비 건수', () => compareLaborToPlan(pdf, sub ? sub.sub : est, sub ? '제출용 측정계획서' : '견적서 측정계획서'), []), pdf.file);
+        add(site, safe('인건비 건수', () => compareLaborToPlan(pdf, sub ? sub.sub : est, sub ? '제출용 측정계획서' : '견적서 측정계획서', cfg.bundleRules), []), pdf.file);
       } else if (estPdfs.length) miss(site, '견적서 PDF 없음', '업로드한 견적서 PDF 중 이 견적(견적금액)과 일치하는 것이 없습니다.');
 
       if (quarter) {
@@ -118,7 +118,7 @@ export function reviewBatch({ company, mode = 'quarter', files, cfg: userCfg }) 
     for (const pdf of estPdfs.filter((p) => !usedPdfs.has(p))) {
       const site = pushSite(pdf.site || pdf.file, pdf.file); site.files.push(pdf.file);
       const sub = subs.find((s) => !usedSubs.has(s) && (s.sub.status?.site ? !pdf.site || sameSite(s.sub.status.site, pdf.site) : true));
-      if (sub) { usedSubs.add(sub); site.files.push(sub.f.name); add(site, safe('인건비 건수', () => compareLaborToPlan(pdf, sub.sub, '제출용 측정계획서'), []), pdf.file); }
+      if (sub) { usedSubs.add(sub); site.files.push(sub.f.name); add(site, safe('인건비 건수', () => [...compareLaborToPlan(pdf, sub.sub, '제출용 측정계획서', cfg.bundleRules), ...reviewBundling(sub.sub, cfg.bundleRules)], []), pdf.file); }
       else miss(site, '측정계획서 없음', '견적서 PDF 의 인건비 건수와 대조할 측정계획서(사업장 제출용 엑셀)가 없습니다.');
       if (quarter) {
         const rs = results.filter((r) => !usedResults.has(r) && pdf.site && sameSite(r.cover?.site, pdf.site));

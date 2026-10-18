@@ -9,6 +9,7 @@
  *  - 숨김 '별4.재집'(유해인자별 단가표), '유해인자'/'유해인자목록'(마스터 명칭)
  */
 import { readSheets, readTable, findHeader, norm, toNum, splitLines, isBlankSample, finding as F, diffMaps, expectedSamples } from './util.js';
+import { bundleViolations, bundleKey } from './bundle-rules.js';
 
 const PLAN = {
   kind: ['구분'], media: ['종류선택'], hazard: ['유해인자'], method: ['측정방법'],
@@ -331,15 +332,27 @@ export function reviewHyundai(p, cfg, typeOverride) {
     if (/다성분/.test(g.method) && g.hazards.length < 2) out.push(F('warn', '다성분', `계획서 ${g.hazards[0]}: 분석방법 '${g.method}' 인데 단독 1개 인자입니다 (다성분 포집 기준 확인).`, `${g.sheet} ${g.rows[0]}행`));
     if (/단성분/.test(g.method) && g.hazards.length > 1) out.push(F('error', '다성분', `계획서 ${g.hazards.join(' + ')}: 한 시료로 묶였는데 분석방법이 '${g.method}' 입니다.`, `${g.sheet} ${g.rows[0]}행`));
   }
+  out.push(...reviewBundling(p, cfg.bundleRules));
   // 수동: 자동 블록과 직접입력 블록 비교
-  if (p.planManual.length) out.push(...reviewManualBlock(p));
+  if (p.planManual.length) out.push(...reviewManualBlock(p, cfg.bundleRules));
+  return out;
+}
+
+
+/** 한 시료로 묶인 인자가 묶음 규칙(단성분·짝 인자)을 어기는지: 측정계획서·재료비내역서 공통 */
+export function reviewBundling(p, rules) {
+  const out = [];
+  for (const g of p.groups.filter((g) => !g.blank || g.hazards.length > 1))
+    for (const v of bundleViolations(g.hazards, rules)) out.push(F('error', '다성분', `계획서 [${g.unit?.dept || '공시료'}] ${v}`, `${g.sheet} ${g.rows[0]}행`));
+  for (const r of p.material || [])
+    for (const v of bundleViolations(r.hazards, rules)) out.push(F('error', '다성분', `재료비내역서${r.blank ? '(공시료)' : ''} ${v}`, `${r.sheet} ${r.row}행`));
   return out;
 }
 
 const mediaParts = (m) => String(m ?? '').split('/').map((x) => x.trim());
 
 /** 수동 견적서: 직접 입력(H~N) ↔ 자동 해석(A~F) 대조, 매체/분석기기 기준 다성분 묶음 검증 */
-function reviewManualBlock(p) {
+function reviewManualBlock(p, rules) {
   const out = [];
   const A = p.groups, B = p.groupsManual;
   const hz = (h) => norm(h);
@@ -366,8 +379,8 @@ function reviewManualBlock(p) {
   }
   // 같은 매체·기기인데 따로 분리된 단일 시료(같은 단위작업) → 다성분 병합 누락 의심
   const byUnit = new Map();
-  for (const g of B.filter((g) => g.hazards.length === 1 && g.media.length === 1 && g.samples > 0 && !/물리/.test(g.media[0]))) {
-    const k = `${g.unit.dept}|${mediaParts(g.media[0]).slice(1, 3).join('/')}`;
+  for (const g of B.filter((g) => g.hazards.length === 1 && g.media.length === 1 && g.samples > 0 && !/물리/.test(g.media[0]) && bundleKey(g.hazards, rules))) { // 단성분(주석 등)은 병합 대상 아님
+    const k = `${g.unit.dept}|${mediaParts(g.media[0]).slice(1, 3).join('/')}|${bundleKey(g.hazards, rules)}`; // 짝 인자(수산화나트륨·칼륨)는 서로끼리만 병합 후보
     byUnit.set(k, [...(byUnit.get(k) || []), g]);
   }
   for (const [k, gs] of byUnit) if (gs.length > 1 && !/^중량|여과/.test(mediaParts(gs[0].media[0])[1] || ''))

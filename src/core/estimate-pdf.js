@@ -3,6 +3,7 @@
  * 인건비 건수·세부건수 ↔ 측정계획(엑셀) 대조.
  */
 import { finding as F, norm, toNum } from './util.js';
+import { bundleKey } from './bundle-rules.js';
 
 /** '견적금액' → /견\s*적\s*금\s*액/ : PDF 추출기에 따라 글자 사이에 공백이 들어간다 */
 const sp = (label) => String(label).replace(/\s+/g, '').split('').map((c) => c.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('\\s*');
@@ -85,7 +86,7 @@ const matches = (item, planMethod) => {
  * 견적서(PDF) 인건비 건수·세부건수 ↔ 측정계획(엑셀).
  * plan: { groups:[{method,samples,blank,unit:{people}}], material:[{method,count,hazards}] }  (parseHyundai / parseSubmission 결과)
  */
-export function compareLaborToPlan(pdf, plan, label = '측정계획서') {
+export function compareLaborToPlan(pdf, plan, label = '측정계획서', rules) {
   const out = [];
   const L = pdf.labor;
   const phys = L.methods.filter((m) => m.section === 4), ana = L.methods.filter((m) => m.section === 5);
@@ -117,7 +118,8 @@ export function compareLaborToPlan(pdf, plan, label = '측정계획서') {
     if (!gs.length || n === m.count) continue;
     const multi = /ICP|다성분/.test(m.label);
     const split = []; // 같은 단위작업·같은 구분(측정/공시료)에서 같은 다성분 방법이 여러 시료로 따로 입력된 곳
-    if (multi) { const by = new Map(); for (const g of gs) { const k = `${g.blank ? '공시료' : g.unit?.dept || ''}`; (by.get(k) || by.set(k, []).get(k)).push(g); } for (const [k, v] of by) if (v.length > 1) split.push([k, v]); }
+    // 같은 단위작업에서 병합될 수 있는 것끼리만 후보로 본다 (단성분(주석 등)은 제외, 수산화나트륨·칼륨처럼 짝이 정해진 인자는 서로끼리만)
+    if (multi) { const by = new Map(); for (const g of gs) { const bk = bundleKey(g.hazards, rules); if (!bk) continue; const k = `${g.blank ? '공시료' : g.unit?.dept || ''}|${bk}`; (by.get(k) || by.set(k, []).get(k)).push(g); } for (const [k, v] of by) if (v.length > 1) split.push([k.split('|')[0], v]); }
     const cause = split.map(([k, v]) => `[${k}] ${v.map((g) => g.hazards.join('+')).join(', ')} ${v.length}개 인자가 각각 별도 시료(${v.map((g) => g.samples).join('+')}건)로 입력됨 — ${m.label} 은(는) 한 시료로 분석되므로 건수는 첫 행에만(${v[0].samples}건) 적고 나머지 행은 건수를 비워 병합해야 합니다`).join(' / ');
     out.push(F('error', '인건비↔계획서', `견적서 인건비 ${m.id} ${m.label}: ${m.count}건 / ${label} 건수 합 ${n}건${cause ? ` — 원인: ${cause}` : ''}`, pdf.file));
   }
