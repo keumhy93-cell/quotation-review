@@ -66,5 +66,11 @@ export function validateConfig(cfg) {
   }
   if (!isObj(cfg?.hazardAliases)) errs.push('유해인자 별칭은 JSON 객체여야 합니다.');
   if (!isObj(cfg?.methodAliases)) errs.push('분석방법 별칭은 JSON 객체여야 합니다.');
+  const br = cfg?.bundleRules;
+  if (br != null) {
+    const strs = (a) => Array.isArray(a) && a.every((x) => typeof x === 'string' && x.trim());
+    if (!strs(br.single || [])) errs.push('묶음 규칙의 단성분 목록은 인자 이름 목록이어야 합니다.');
+    if (!Array.isArray(br.onlyWith || []) || !(br.onlyWith || []).every((g) => strs(g) && g.length >= 2)) errs.push('묶음 규칙의 "서로끼리만 묶이는 인자"는 한 줄에 인자 이름 2개 이상이어야 합니다.');
+  }
   return errs;
 }

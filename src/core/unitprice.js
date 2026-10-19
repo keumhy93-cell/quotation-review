@@ -4,6 +4,7 @@
  *   실시현황(현장 목록) / '수수료 산출근거(…)' (No.n 블록: 기본측정비 + 공종×유해인자 표 + 합계) / 단가(기본관리비·분석수수료 단가표)
  */
 import { readSheets, norm, toNum, finding as F, expectedSamples, canonHazard, diffMaps } from './util.js';
+import { bundleViolations, bundleKey } from './bundle-rules.js';
 
 const won = (n) => (n == null ? '-' : Number(n).toLocaleString('ko-KR'));
 const bracket = (label) => { const m = String(label).match(/(\d+)\s*-\s*(\d+)/); return m ? [Number(m[1]), Number(m[2])] : null; };
@@ -142,6 +143,20 @@ export function reviewUnitPrice(est, cfg, company) {
       if (b.base.unit != null && !b.base.unitF) out.push(F('warn', '연동', `기본관리비 단가 ${won(b.base.unit)} 가 수식(VLOOKUP)이 아닌 직접 입력 값입니다.`, w(b.base.row)));
       if (b.base.unit != null && b.base.days != null && b.base.amount !== b.base.unit * b.base.days) out.push(F('error', '기본관리비', `금액 ${won(b.base.amount)} ≠ 단가 ${won(b.base.unit)} × ${b.base.days}일`, w(b.base.row)));
     } else out.push(F('error', '기본관리비', '기본측정비(총 근로자수) 행을 찾지 못했습니다.', tag));
+
+    // 1-2) 다성분 묶음 규칙: 단성분(주석(유기화합물))은 다른 인자와 묶이면 안 되고, 수산화나트륨은 수산화칼륨과만 묶인다
+    for (const it of b.items) for (const v of bundleViolations(expandHazards(it.hazardText), cfg.bundleRules)) out.push(F('error', '다성분', `[${it.gong}] ${v}`, w(it.row)));
+    //     같은 공종에서 한 시료로 분석하는 방법(ICP·…(다성분))이 인자마다 따로 입력되면 분석비가 과다 계상된다 (묶일 수 있는 인자끼리만 검토)
+    {
+      const by = new Map();
+      for (const it of b.items) {
+        if (!(it.samples > 0) || !/ICP|다성분/.test(it.method)) continue;
+        const bk = bundleKey(expandHazards(it.hazardText), cfg.bundleRules); if (!bk) continue;
+        const k = `${it.gong}|${norm(it.method)}|${bk}`; by.set(k, [...(by.get(k) || []), it]);
+      }
+      for (const its of by.values()) if (its.length > 1)
+        out.push(F('warn', '다성분', `[${its[0].gong}] ${its[0].method} 인 ${its.map((x) => x.hazardText.replace(/\s+/g, ' ')).join(', ')} 가 각각 별도 시료(${its.map((x) => x.samples).join('+')}건)로 입력됨 — 한 시료로 묶어야 하는지 확인하세요 (분석비 과다 가능).`, its.map((x) => w(x.row)).join(', ')));
+    }
 
     // 2) 유해인자별 행
     let sumAmt = 0;

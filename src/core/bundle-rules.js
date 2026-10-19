@@ -10,7 +10,9 @@ export const DEFAULT_BUNDLE_RULES = {
   onlyWith: [['수산화나트륨', '수산화칼륨']],
 };
 
-const hit = (h, rule) => { const a = norm(h), b = norm(rule); return !!b && (a === b || a.includes(b)); };
+// 인자 이름은 고정값과 정확히 일치해야 한다 (공백·(STEL)/(TWA) 허용기준 표기만 무시)
+const plain = (s) => norm(s).replace(/\((stel|twa|ceiling)\)/g, '');
+const hit = (h, rule) => !!plain(rule) && plain(h) === plain(rule);
 
 /** 인자의 묶음 종류: {kind:'single'} | {kind:'set', id, set} | {kind:'free'} */
 export function bundleKind(h, rules = DEFAULT_BUNDLE_RULES) {

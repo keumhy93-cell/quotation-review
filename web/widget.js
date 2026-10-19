@@ -132,6 +132,11 @@ export function mountReview(el, opts = {}) {
           <p class="qr-mute" style="margin:4px 0">계약 단가가 들어 있는 견적 엑셀(‘단가’ 시트)을 올리면 그 단가표를 계약 기준으로 저장합니다. 이후 견적서는 이 기준과 비교합니다.</p>
           ${['gyeryong', 'hanwha'].map((c) => `<div class="qr-row"><b style="width:70px">${COMPANIES[c][0]}</b><span class="qr-mute" data-r="contract-info-${c}"></span><label class="qr-drop" style="min-height:0;padding:4px 12px;border-style:solid"><span style="color:inherit">단가표 올리기</span><input type="file" data-r="contract-${c}" accept=".xlsx,.xlsm,.xls"></label><button data-r="contract-clear-${c}">기준 삭제</button></div>`).join('')}
         </div>
+        <div class="qr-cfg-box" style="margin-top:14px"><h3>다성분 묶음 규칙 <small>(같은 분석방법이라도 아무 인자나 한 시료로 묶을 수 있는 것은 아닙니다 — 현대·계룡·한화 공통)</small></h3>
+          <p class="qr-mute" style="margin:4px 0">인자 이름은 아래 이름과 <b>정확히 일치</b>할 때만 적용됩니다(공백, (STEL) 표기는 무시).</p>
+          <b>단성분 인자</b> <small>(한 줄에 하나 — 다른 인자와 묶이면 오류)</small><textarea data-r="cfg-single" spellcheck="false" style="min-height:64px"></textarea>
+          <b>서로끼리만 묶이는 인자</b> <small>(한 줄에 한 묶음, 쉼표로 구분 — 예: 수산화나트륨, 수산화칼륨. 이 묶음 밖의 인자와 묶이면 오류)</small><textarea data-r="cfg-onlywith" spellcheck="false" style="min-height:64px"></textarea>
+        </div>
         <details style="margin-top:14px"><summary>유해인자·분석방법 별칭 (JSON)</summary>
           <p class="qr-mute">계룡·한화 견적서의 약칭을 결과서 유해인자명으로, 분석방법명을 단가표 규격명으로 연결합니다.</p>
           <b>유해인자 별칭</b><textarea data-r="cfg-haz" spellcheck="false"></textarea>
@@ -302,6 +307,8 @@ export function mountReview(el, opts = {}) {
         ${GRADES.map((g) => `<label>${g} 노임단가 <input type="number" step="1" min="0" data-g="${g}" value="${rates[p].wage[g]}"></label>`).join('')}
       </div>`).join('');
     $('cfg-industry').value = cfg.industry === '건설업' ? '건설업' : '기타';
+    $('cfg-single').value = (cfg.bundleRules?.single || []).join('\n');
+    $('cfg-onlywith').value = (cfg.bundleRules?.onlyWith || []).map((g) => g.join(', ')).join('\n');
     $('cfg-haz').value = JSON.stringify(cfg.hazardAliases, null, 2);
     $('cfg-met').value = JSON.stringify(cfg.methodAliases, null, 2);
     msg(''); contractInfo();
@@ -333,6 +340,8 @@ export function mountReview(el, opts = {}) {
       for (const g of GRADES) r.wage[g] = num(box.querySelector(`[data-g="${g}"]`).value);
     }
     next.industry = $('cfg-industry').value === '건설업' ? '건설업' : '기타';
+    const lines = (t) => String(t || '').split(/\n/).map((x) => x.trim()).filter(Boolean);
+    next.bundleRules = { single: lines($('cfg-single').value), onlyWith: lines($('cfg-onlywith').value).map((l) => l.split(/[,，]/).map((x) => x.trim()).filter(Boolean)) };
     next.hazardAliases = JSON.parse($('cfg-haz').value || '{}');
     next.methodAliases = JSON.parse($('cfg-met').value || '{}');
     return next;

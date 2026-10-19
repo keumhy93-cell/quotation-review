@@ -7,6 +7,7 @@ import { buildBundle } from '../src/core/bundle.js';
 import { splitUsage } from '../src/core/usage.js';
 import { parseEstimatePdf, compareLaborToPlan } from '../src/core/estimate-pdf.js';
 import { parseHyundai } from '../src/core/hyundai.js';
+import { validateConfig } from '../src/core/config.js';
 import { extractContract, parseUnitPrice } from '../src/core/unitprice.js';
 import { reviewBatch } from '../src/core/batch.js';
 import { diffFindings, diffFiles, findingKey } from '../src/core/history.js';
@@ -208,4 +209,30 @@ test('방법별 건수: 주석(유기화합물)이 다른 ICP 인자와 한 시�
   // 주석을 분리해서 입력했으면 일치
   p.groups = [g(['주석(유기화합물)'], 'ICP', 3), g(['산화철분진과흄', '이산화티타늄'], 'ICP', 3), g(['수산화나트륨'], 'ICP', 2), g(['수산화나트륨'], 'ICP', 1, true)];
   assert.deepEqual(reviewMethodCounts(p), []);
+});
+
+test('계룡·한화(단가제)에도 묶음 규칙 적용: 주석(유기화합물) 묶음 오류, ICP 인자별 분리 입력은 병합 확인 경고', () => {
+  const rows = [
+    ['용접', '금속류\n(주석(유기화합물),망간)', '금속', 'ICP', 8, 2, 100000],
+    ['용접', '산화철분진과흄', '금속', 'ICP', 8, 2, 100000],
+    ['용접', '이산화티타늄', '금속', 'ICP', 8, 2, 100000],
+    ['도장', '수산화나트륨', '금속', 'ICP', 8, 2, 100000],
+    ['도장', '수산화칼륨', '금속', 'ICP', 8, 2, 100000],
+  ];
+  const block = { no: 1, name: '계룡건설산업㈜-가 공사', period: '정기', workers: 8, rows };
+  const f = runReview({ company: 'gyeryong', cfg: mergeConfig({}), estimateWb: unitPriceWb({ blocks: [block] }) }).estimate.filter((x) => x.category === '다성분');
+  assert.ok(f.some((x) => x.severity === 'error' && /주석\(유기화합물\) 은\(는\) 단성분/.test(x.message)));
+  // 용접: 산화철·이산화티타늄은 서로 병합 후보, 도장: 수산화나트륨·칼륨도 서로 병합 후보 (주석 포함 행은 후보가 아님)
+  const warns = f.filter((x) => x.severity === 'warn').map((x) => x.message);
+  assert.ok(warns.some((m) => /\[용접\] ICP 인 산화철분진과흄, 이산화티타늄 가 각각 별도 시료/.test(m)));
+  assert.ok(warns.some((m) => /\[도장\] ICP 인 수산화나트륨, 수산화칼륨 가 각각 별도 시료/.test(m)));
+  // 규칙을 비우면(설정) 오류가 사라진다
+  const off = runReview({ company: 'gyeryong', cfg: mergeConfig({ bundleRules: { single: [], onlyWith: [] } }), estimateWb: unitPriceWb({ blocks: [block] }) }).estimate.filter((x) => x.category === '다성분' && x.severity === 'error');
+  assert.deepEqual(off, []);
+});
+
+test('설정 검증: 묶음 규칙은 문자열 목록, 묶음은 인자 2개 이상', () => {
+  assert.deepEqual(validateConfig(mergeConfig({})), []);
+  assert.ok(validateConfig(mergeConfig({ bundleRules: { single: [''], onlyWith: [] } })).length);
+  assert.ok(validateConfig(mergeConfig({ bundleRules: { single: [], onlyWith: [['수산화나트륨']] } })).length);
 });
