@@ -236,3 +236,12 @@ test('설정 검증: 묶음 규칙은 문자열 목록, 묶음은 인자 2개 �
   assert.ok(validateConfig(mergeConfig({ bundleRules: { single: [''], onlyWith: [] } })).length);
   assert.ok(validateConfig(mergeConfig({ bundleRules: { single: [], onlyWith: [['수산화나트륨']] } })).length);
 });
+
+test('기본 묶음 규칙: 기타광물성분진·규산염(포틀랜드시멘트)·유리섬유는 함께 묶을 수 있고, 용접흄·주석(유기화합물)·산화아연(분진)은 단성분', async () => {
+  const { bundleViolations } = await import('../src/core/bundle-rules.js');
+  assert.deepEqual(bundleViolations(['기타광물성분진', '규산염(포틀랜드시멘트)', '유리섬유']), []);
+  for (const single of ['용접흄및분진', '주석(유기화합물)', '산화아연(분진)']) assert.match(bundleViolations([single, '기타광물성분진'])[0], /단성분/);
+  // 산화아연 과 산화아연(분진) 은 다른 인자 — 산화아연은 다른 인자와 묶여도 된다
+  assert.deepEqual(bundleViolations(['산화아연', '망간및그무기화합물']), []);
+  assert.equal(bundleViolations(['산화아연(분진)', '산화아연']).length, 1);
+});

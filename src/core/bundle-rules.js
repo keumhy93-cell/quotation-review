@@ -6,7 +6,7 @@
  */
 const norm = (s) => String(s ?? '').replace(/\s+/g, '').toLowerCase();
 export const DEFAULT_BUNDLE_RULES = {
-  single: ['주석(유기화합물)'],
+  single: ['용접흄및분진', '용접흄', '주석(유기화합물)', '산화아연(분진)'],
   onlyWith: [['수산화나트륨', '수산화칼륨']],
 };
 
