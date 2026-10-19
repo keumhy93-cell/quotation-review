@@ -8,7 +8,7 @@
  */
 import { finding as F, norm } from './util.js';
 import { mergeConfig } from './config.js';
-import { parseHyundai, parseSubmission, reviewHyundai, reviewSubmission, reviewBundling } from './hyundai.js';
+import { parseHyundai, parseSubmission, reviewHyundai, reviewSubmission, reviewBundling, reviewMethodCounts } from './hyundai.js';
 import { parseUnitPrice, reviewUnitPrice, compareBlockToResult, findBlock, blockGroups } from './unitprice.js';
 import { parseResultText, reviewResultPdf } from './result-pdf.js';
 import { parseResult } from './parsers.js';
@@ -59,8 +59,8 @@ export function reviewBatch({ company, mode = 'quarter', files, cfg: userCfg }) 
 
   // ── 읽기
   const byRole = (r) => files.filter((f) => f.role === r);
-  const ests = byRole('hyundai-estimate').map((f) => ({ f, est: safe(`견적서 읽기(${f.name})`, () => parseHyundai(f.wb), null) })).filter((x) => x.est);
-  const subs = byRole('hyundai-submission').map((f) => ({ f, sub: safe(`제출용 읽기(${f.name})`, () => parseSubmission(f.wb), null) })).filter((x) => x.sub);
+  const ests = byRole('hyundai-estimate').map((f) => ({ f, est: safe(`견적서 읽기(${f.name})`, () => parseHyundai(f.wb, { bundleRules: cfg.bundleRules }), null) })).filter((x) => x.est);
+  const subs = byRole('hyundai-submission').map((f) => ({ f, sub: safe(`제출용 읽기(${f.name})`, () => parseSubmission(f.wb, { bundleRules: cfg.bundleRules }), null) })).filter((x) => x.sub);
   const unitFiles = byRole('unitprice-estimate').map((f) => ({ f, est: safe(`산출근거 읽기(${f.name})`, () => parseUnitPrice(f.wb), null) })).filter((x) => x.est);
   const estPdfs = byRole('estimate-pdf').map((f) => safe(`견적서 PDF 읽기(${f.name})`, () => parseEstimatePdf(f.text, f.name), null)).filter(Boolean);
   const results = [
@@ -118,7 +118,7 @@ export function reviewBatch({ company, mode = 'quarter', files, cfg: userCfg }) 
     for (const pdf of estPdfs.filter((p) => !usedPdfs.has(p))) {
       const site = pushSite(pdf.site || pdf.file, pdf.file); site.files.push(pdf.file);
       const sub = subs.find((s) => !usedSubs.has(s) && (s.sub.status?.site ? !pdf.site || sameSite(s.sub.status.site, pdf.site) : true));
-      if (sub) { usedSubs.add(sub); site.files.push(sub.f.name); add(site, safe('인건비 건수', () => [...compareLaborToPlan(pdf, sub.sub, '제출용 측정계획서', cfg.bundleRules), ...reviewBundling(sub.sub, cfg.bundleRules)], []), pdf.file); }
+      if (sub) { usedSubs.add(sub); site.files.push(sub.f.name); add(site, safe('인건비 건수', () => [...compareLaborToPlan(pdf, sub.sub, '제출용 측정계획서', cfg.bundleRules), ...reviewBundling(sub.sub, cfg.bundleRules), ...reviewMethodCounts(sub.sub, cfg.bundleRules)], []), pdf.file); }
       else miss(site, '측정계획서 없음', '견적서 PDF 의 인건비 건수와 대조할 측정계획서(사업장 제출용 엑셀)가 없습니다.');
       if (quarter) {
         const rs = results.filter((r) => !usedResults.has(r) && pdf.site && sameSite(r.cover?.site, pdf.site));

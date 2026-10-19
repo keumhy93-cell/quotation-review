@@ -192,3 +192,20 @@ test('reviewBundling: 계획서·재료비내역서에서 규칙을 어긴 묶�
   assert.ok(f.some((x) => /계획서 \[B\] 주석\(유기화합물\) 은\(는\) 단성분/.test(x.message) && x.where === '계획서 7행'));
   assert.ok(f.some((x) => /재료비내역서 수산화나트륨/.test(x.message) && x.where === '재료비 5행'));
 });
+
+test('방법별 건수: 주석(유기화합물)이 다른 ICP 인자와 한 시료로 묶이면 계획서 합계가 모자라 원인과 함께 지적한다 / (STEL) 표기·단성분+다성분 공존은 오류가 아니다', async () => {
+  const { reviewMethodCounts } = await import('../src/core/hyundai.js');
+  const unit = { dept: '배관' };
+  const g = (hazards, method, samples, blank = false) => ({ hazards, method, samples, unit, blank, sheet: '계획서', rows: [18] });
+  const m = (hazards, method, count, blank = false) => ({ hazards, method, count, blank });
+  const p = {
+    groups: [g(['주석(유기화합물)', '산화철분진과흄', '이산화티타늄'], 'ICP', 3), g(['수산화나트륨'], 'ICP', 2), g(['수산화나트륨'], 'ICP', 1, true)],
+    material: [m(['주석(유기화합물)'], 'ICP', 3), m(['산화철분진과흄', '이산화티타늄'], 'ICP', 3), m(['수산화나트륨(STEL)'], 'ICP', 2), m(['수산화나트륨(STEL)'], 'ICP', 1, true)],
+  };
+  const f = reviewMethodCounts(p);
+  assert.equal(f.length, 1);
+  assert.match(f[0].message, /ICP 건수 합: 계획서 6건\(측정 5 \+ 공시료 1\) \/ 재료비내역서 9건\(측정 8 \+ 공시료 1\) — 원인: \[배관\] 주석\(유기화합물\) \+ 산화철분진과흄 \+ 이산화티타늄 이\(가\) 한 시료\(3건\)로 묶여 있음/);
+  // 주석을 분리해서 입력했으면 일치
+  p.groups = [g(['주석(유기화합물)'], 'ICP', 3), g(['산화철분진과흄', '이산화티타늄'], 'ICP', 3), g(['수산화나트륨'], 'ICP', 2), g(['수산화나트륨'], 'ICP', 1, true)];
+  assert.deepEqual(reviewMethodCounts(p), []);
+});

@@ -22,7 +22,7 @@ const MAT = {
 
 const byName = (sheets, ...keys) => sheets.find((s) => keys.every((k) => s.name.includes(k)));
 const baseName = (s) => String(s ?? '').replace(/공시료|blank/gi, '').trim();
-const key = (s) => norm(baseName(s));
+const key = (s) => norm(baseName(s)).replace(/\((stel|twa|ceiling)\)/g, ''); // (STEL) 같은 허용기준 표기는 같은 인자로 본다
 // SUMIF 조건은 공백까지 정확히 일치해야 집계되므로 공백은 보존
 const short = (s) => norm(String(s ?? '').split('/')[0]);
 const cn = (s) => String(s ?? '').trim().toLowerCase();
@@ -257,10 +257,10 @@ export function reviewHyundai(p, cfg, typeOverride) {
   const physical = (g) => mCrit.has(cn(g.method));
   const chemGroups = p.groups.filter((g) => !physical(g) && !g.blank);
   const hz = (h) => key(h);
-  const planMap = new Map(), nameOf = new Map(), planMethod = new Map();
+  const planMap = new Map(), nameOf = new Map(), planMethod = new Map(); // planMethod: 인자 → 계획서에 쓰인 측정방법 집합(같은 인자가 단성분·다성분 양쪽에 나올 수 있다)
   for (const g of chemGroups) for (const h of g.hazards) {
     planMap.set(hz(h), (planMap.get(hz(h)) || 0) + g.samples); nameOf.set(hz(h), h);
-    if (g.method) planMethod.set(hz(h), g.method);
+    if (g.method) planMethod.set(hz(h), (planMethod.get(hz(h)) || new Set()).add(g.method));
   }
   const matMeasure = p.material.filter((r) => !r.blank), matBlank = p.material.filter((r) => r.blank);
   const matMap = new Map();
@@ -274,7 +274,7 @@ export function reviewHyundai(p, cfg, typeOverride) {
   for (const d of diffMaps(planMap, matMap)) out.push(F('error', '계획서↔재료비', `${nameOf.get(d.key) || d.key}: 계획서 ${d.a}건 / 재료비내역서(측정) ${d.b}건`, d.a > d.b ? '재료비 누락·과소' : '계획서 누락 또는 재료비 과다'));
   for (const r of matMeasure) for (const h of r.hazards) {
     const pm = planMethod.get(hz(h));
-    if (pm && r.method && cn(pm) !== cn(r.method)) out.push(F('error', '분석방법', `${h}: 계획서 측정방법 '${pm}' / 재료비 분석방법 '${r.method}' 불일치`, `${r.sheet} ${r.row}행`));
+    if (pm && r.method && ![...pm].some((m) => cn(m) === cn(r.method))) out.push(F('error', '분석방법', `${h}: 계획서 측정방법 '${[...pm].join("', '")}' / 재료비 분석방법 '${r.method}' 불일치`, `${r.sheet} ${r.row}행`));
   }
 
   // 6) 공시료: 측정된 모든 화학인자에 공시료가 있어야 하고, 측정하지 않은 인자의 공시료는 없어야 한다
@@ -332,12 +332,38 @@ export function reviewHyundai(p, cfg, typeOverride) {
     if (/다성분/.test(g.method) && g.hazards.length < 2) out.push(F('warn', '다성분', `계획서 ${g.hazards[0]}: 분석방법 '${g.method}' 인데 단독 1개 인자입니다 (다성분 포집 기준 확인).`, `${g.sheet} ${g.rows[0]}행`));
     if (/단성분/.test(g.method) && g.hazards.length > 1) out.push(F('error', '다성분', `계획서 ${g.hazards.join(' + ')}: 한 시료로 묶였는데 분석방법이 '${g.method}' 입니다.`, `${g.sheet} ${g.rows[0]}행`));
   }
-  out.push(...reviewBundling(p, cfg.bundleRules));
+  out.push(...reviewBundling(p, cfg.bundleRules), ...reviewMethodCounts(p, cfg.bundleRules));
   // 수동: 자동 블록과 직접입력 블록 비교
   if (p.planManual.length) out.push(...reviewManualBlock(p, cfg.bundleRules));
   return out;
 }
 
+
+/**
+ * 분석방법별 건수: 측정계획서 ↔ 재료비내역서 (측정분·공시료 따로). 인자별로는 같아 보여도 방법 합계가 어긋나는 경우를 잡는다.
+ * 건수가 빈 이어지는 행은 앞 시료와 같은 시료로 보는데, 단성분(주석(유기화합물) 등)·짝 규칙을 어기고 묶인 경우 재료비내역서는
+ * 따로 계산하므로 계획서 합계가 모자라게 된다 → 원인으로 알려준다.
+ */
+export function reviewMethodCounts(p, rules) {
+  const out = [];
+  const methods = new Set((p.material || []).map((r) => cn(r.method)).filter(Boolean));
+  const phys = new Set((p.labor?.measure || []).map((x) => cn(x.crit)));
+  for (const m of methods) {
+    if (phys.has(m)) continue;
+    const mats = p.material.filter((r) => cn(r.method) === m), gs = p.groups.filter((g) => cn(g.method) === m && g.samples > 0);
+    const label = mats[0].method;
+    const pm = gs.filter((g) => !g.blank), pb = gs.filter((g) => g.blank);
+    const mm = mats.filter((r) => !r.blank), mb = mats.filter((r) => r.blank);
+    const pMeasure = sum(pm, (g) => g.samples), mMeasure = sum(mm, (r) => r.count), mBlank = sum(mb, (r) => r.count);
+    const pBlank = pb.length ? sum(pb, (g) => g.samples) : mBlank; // 견적 엑셀의 계획서에는 공시료 행이 없어 재료비내역서의 공시료를 그대로 쓴다
+    const a = pMeasure + pBlank, b = mMeasure + mBlank;
+    if (a === b) continue;
+    const bad = pm.filter((g) => bundleViolations(g.hazards, rules).length);
+    const cause = bad.map((g) => `[${g.unit?.dept}] ${g.hazards.join(' + ')} 이(가) 한 시료(${g.samples}건)로 묶여 있음 — ${bundleViolations(g.hazards, rules).join('; ')}`).join(' / ');
+    out.push(F('error', '계획서↔재료비', `${label} 건수 합: 계획서 ${a}건(측정 ${pMeasure} + 공시료 ${pBlank}) / 재료비내역서 ${b}건(측정 ${mMeasure} + 공시료 ${mBlank})${cause ? ` — 원인: ${cause}. 재료비내역서는 이를 따로 계산하고 있습니다` : ''}`, bad.length ? bad.map((g) => `${g.sheet} ${g.rows[0]}행`).join(', ') : ''));
+  }
+  return out;
+}
 
 /** 한 시료로 묶인 인자가 묶음 규칙(단성분·짝 인자)을 어기는지: 측정계획서·재료비내역서 공통 */
 export function reviewBundling(p, rules) {
@@ -389,8 +415,8 @@ function reviewManualBlock(p, rules) {
 }
 
 /** 사업장 제출용 엑셀(실시현황 + 계획서 + 재료비) 파서 */
-export function parseSubmission(wb) {
-  const p = parseHyundai(wb);
+export function parseSubmission(wb, opt = {}) {
+  const p = parseHyundai(wb, opt);
   const sheets = readSheets(wb);
   const st = sheets.find((s) => s.name.includes('실시현황'));
   p.status = null;
