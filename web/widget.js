@@ -31,6 +31,7 @@ import { Workspace } from '../src/core/workspace.js';
 import { applyPriceBook } from '../src/core/pricebook.js';
 import { CSS } from './widget-style.js';
 import { renderCategories } from './findings-view.js';
+import { groupFindings, detailRows } from '../src/core/findings-table.js';
 
 const COMPANIES = { hyundai: ['현대건설', '품셈'], gyeryong: ['계룡건설', '단가제'], hanwha: ['한화건설', '단가제'] };
 const GRADES = ['특급기술자', '고급기술자', '중급기술자', '초급기술자'];
@@ -292,9 +293,16 @@ export function mountReview(el, opts = {}) {
   on($('export'), 'click', async () => {
     if (!st.last) return;
     await ensureXlsx(o.assetBase);
-    const rows = GROUPS.flatMap(([k, title]) => (st.last[k] || []).map((f) => ({ 구분: title, 심각도: SEV[f.severity], 분류: f.category, 내용: f.message, 위치: f.where, 파일: f.file || '' })));
     const X = globalThis.XLSX, wb = X.utils.book_new();
-    X.utils.book_append_sheet(wb, X.utils.json_to_sheet(rows.length ? rows : [{ 내용: '지적 사항 없음' }]), '검토결과');
+    const sheet = (aoa, widths, filter) => { const ws = X.utils.aoa_to_sheet(aoa); ws['!cols'] = widths.map((w) => ({ wch: w })); if (filter && aoa.length > 1) ws['!autofilter'] = { ref: `A1:${String.fromCharCode(64 + widths.length)}${aoa.length}` }; return ws; };
+    const sum = [['구분', '분류', '오류', '주의', '참고']], det = [['구분', '분류', '심각도', '내용', '사유·상세', '위치·파일', '곳수']];
+    for (const [k, title] of GROUPS) {
+      const list = st.last[k] || [];
+      for (const c of groupFindings(list)) sum.push([title, c.category, c.error, c.warn, c.info]);
+      det.push(...detailRows(list, [title]));
+    }
+    X.utils.book_append_sheet(wb, sheet(sum.length > 1 ? sum : [['지적 사항 없음']], [26, 24, 8, 8, 8]), '분류별 요약');
+    X.utils.book_append_sheet(wb, sheet(det.length > 1 ? det : [['지적 사항 없음']], [26, 20, 8, 60, 60, 38, 6], true), '검토결과(분류별)');
     X.writeFile(wb, `검토결과_${new Date().toISOString().slice(0, 10)}.xlsx`);
   });
 

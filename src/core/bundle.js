@@ -3,7 +3,7 @@ import JSZip from 'jszip';
 import { XLSX } from './xlsx.js';
 import { mergeStatus, statusToWorkbook, siteKey } from './status.js';
 import { usageToWorkbook, orderUsage } from './usage.js';
-import { summarizeProject, summaryRows, currentRev } from './summary.js';
+import { summarizeProject, summaryRows, categoryRows, currentRev } from './summary.js';
 import { COMPANY_LABEL } from './workspace.js';
 
 const safe = (s, max = 70) => String(s ?? '').replace(/[\\/:*?"<>|\r\n\t]+/g, '_').replace(/\s+/g, ' ').trim().slice(0, max) || '_';
@@ -18,9 +18,13 @@ function summaryWorkbook(projects) {
   const head = [['프로젝트', '기관', '리비전', '상태', '오류', '주의', '누락(미응답)', '현장 수']];
   for (const p of projects) for (const s of summarizeProject(p)) head.push([p.title, s.org, `r${s.rev}/${s.revisions}`, s.status === 'finalized' ? '확정' : '진행', s.counts.error, s.counts.warn, s.openMissing, s.sites.length]);
   XLSX.utils.book_append_sheet(wb, aoaSheet(head, [28, 14, 10, 8, 6, 6, 12, 8]), '기관별 요약');
+  const cat = categoryRows(projects);
+  XLSX.utils.book_append_sheet(wb, aoaSheet(cat.length > 1 ? cat : [['지적 사항 없음']], [30, 8, 8, 10, 10]), '분류별 요약');
   const detail = [];
-  projects.forEach((p, i) => summaryRows(p).forEach((r, j) => { if (i === 0 || j > 0) detail.push(r); }));
-  XLSX.utils.book_append_sheet(wb, aoaSheet(detail.length ? detail : [['지적 사항 없음']], [12, 34, 8, 14, 70, 22, 24, 6]), '상세(오류·누락)');
+  projects.forEach((p, i) => summaryRows(p, { header: i === 0 }).forEach((r) => detail.push(r)));
+  const dws = aoaSheet(detail.length > 1 ? detail : [['지적 사항 없음']], [12, 14, 34, 20, 8, 56, 60, 36, 6, 6]);
+  if (detail.length > 1) dws['!autofilter'] = { ref: `A1:J${detail.length}` };
+  XLSX.utils.book_append_sheet(wb, dws, '상세(분류별)');
   const hist = [['일시', '작업자', '구분', '내용']];
   for (const p of projects) for (const e of p.events) hist.push([e.ts, e.by, EVENT_LABEL[e.type] || e.type, e.text || '']);
   XLSX.utils.book_append_sheet(wb, aoaSheet(hist, [24, 12, 12, 100]), '이력');

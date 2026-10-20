@@ -127,6 +127,6 @@ test('최종 ZIP: 건설사 폴더에 취합 실시현황·사용실태·결과�
   assert.ok(names.includes('2026-2분기/계룡건설/검토요약_계룡건설_2026-2분기.xlsx'));
   assert.equal(dec(await z.file('2026-2분기/계룡건설/결과서/001_계룡건설산업(주) - 가나 아파트 신축공사.pdf').async('uint8array')), result, '결과서 원본이 그대로 들어간다');
   const sumWb = XLSX.read(await z.file('2026-2분기/계룡건설/검토요약_계룡건설_2026-2분기.xlsx').async('uint8array'), { type: 'array' });
-  assert.deepEqual(sumWb.SheetNames, ['기관별 요약', '상세(오류·누락)', '이력', '누락 응답']);
+  assert.deepEqual(sumWb.SheetNames, ['기관별 요약', '분류별 요약', '상세(분류별)', '이력', '누락 응답']);
   assert.ok(files.length >= 5);
 });

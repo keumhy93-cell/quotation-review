@@ -245,3 +245,22 @@ test('기본 묶음 규칙: 기타광물성분진·규산염(포틀랜드시멘�
   assert.deepEqual(bundleViolations(['산화아연', '망간및그무기화합물']), []);
   assert.equal(bundleViolations(['산화아연(분진)', '산화아연']).length, 1);
 });
+
+test('엑셀 분류별 정리: 같은 분류끼리 묶고(오류 많은 순), 같은 내용은 한 행(위치 여러 개), 긴 문장은 내용/사유로 나눈다', async () => {
+  const { groupFindings, detailRows, splitMessage } = await import('../src/core/findings-table.js');
+  const m = '계획서 [배관] 주석(유기화합물) 은(는) 단성분 분석이라 묶을 수 없습니다 (함께 묶인 인자: 산화철분진과흄, 알루미늄(금속분진)) — 원인: 한 시료(3건)';
+  assert.deepEqual(splitMessage(m), { head: '계획서 [배관] 주석(유기화합물) 은(는) 단성분 분석이라 묶을 수 없습니다', detail: ['함께 묶인 인자: 산화철분진과흄, 알루미늄(금속분진)', '원인: 한 시료(3건)'] });
+  const fs = [
+    { severity: 'warn', category: '단가', message: 'A', where: '1행' },
+    { severity: 'error', category: '다성분', message: m, where: '23행', file: 'a.xlsx' },
+    { severity: 'error', category: '다성분', message: m, where: '59행', file: 'a.xlsx' },
+    { severity: 'error', category: '재료비 0원', message: 'B', where: '9행' },
+    { severity: 'error', category: '재료비 0원', message: 'C', where: '10행' },
+  ];
+  const g = groupFindings(fs);
+  assert.deepEqual(g.map((c) => [c.category, c.error, c.warn]), [['재료비 0원', 2, 0], ['다성분', 1, 0], ['단가', 0, 1]]); // 오류 많은 순
+  const rows = detailRows(fs, ['견적서 검토']);
+  assert.equal(rows.length, 4); // 다성분 2건은 한 행으로 합쳐짐
+  const dup = rows.find((r) => r[1] === '다성분');
+  assert.equal(dup[6], 2); assert.equal(dup[5], '23행 · a.xlsx\n59행 · a.xlsx'); assert.match(dup[4], /함께 묶인 인자: 산화철분진과흄/);
+});
