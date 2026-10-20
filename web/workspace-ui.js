@@ -3,7 +3,7 @@
  * 흐름: 작업 열기(건설사+기간) → 기관별 파일 업로드·검토 → 누락 알림 응답 → 오류 요약 → 수정본 → 이력 → 확정 → 취합·ZIP 다운로드
  */
 import { COMPANY_LABEL, summarizeProject, missingKey } from '../src/core/workspace.js';
-import { buildBundle, summaryWorkbook } from '../src/core/bundle.js';
+import { buildBundle, summaryXlsx } from '../src/core/bundle.js';
 import { statusToWorkbook } from '../src/core/status.js';
 import { usageToWorkbook } from '../src/core/usage.js';
 import { XLSX } from '../src/core/xlsx.js';
@@ -366,7 +366,7 @@ export function mountWorkspace(root, { ws, store, onChange }) {
       else if (act === 'reopen') await busy('확정 해제 중', async () => { ui.project = await ws.reopen(ui.project.id, id); await reload(); });
       else if (act === 'order') await busy('순서 변경 중', async () => { const r = await ws.moveStatusOrder(ui.project.id, id, Number(b.dataset.dir)); if (r) ui.project = r; await reload(); });
       else if (act === 'toggle-preview') { ui.preview = !ui.preview; render(); }
-      else if (act === 'dl-summary') { const wb = summaryWorkbook([ui.project]); download(XLSX.write(wb, { type: 'array', bookType: 'xlsx' }), `검토요약_${ui.project.title}.xlsx`); }
+      else if (act === 'dl-summary') await busy('요약 엑셀 만드는 중', async () => { download(await summaryXlsx([ui.project]), `검토요약_${ui.project.title}.xlsx`); });
       else if (act === 'dl-status') await busy('실시현황 만드는 중', async () => { const { merged } = ws.buildStatus(ui.project, statusOpts()); download(XLSX.write(statusToWorkbook(merged), { type: 'array', bookType: 'xlsx' }), `실시현황_${COMPANY_LABEL[ui.project.company]}_${ui.project.period}.xlsx`); await recordDownload('취합 실시현황 xlsx'); });
       else if (act === 'dl-usage') await busy('사용실태 만드는 중', async () => { const a = ws.assemble(ui.project, statusOpts()); download(XLSX.write(usageToWorkbook(a.usage, `${COMPANY_LABEL[ui.project.company]} ${ui.project.period} 사용실태 취합`), { type: 'array', bookType: 'xlsx' }), `사용실태_${COMPANY_LABEL[ui.project.company]}_${ui.project.period}.xlsx`); await recordDownload('취합 사용실태 xlsx'); });
       else if (act === 'dl-zip') await doZip();

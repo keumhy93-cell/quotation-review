@@ -4,6 +4,7 @@ import { XLSX } from './xlsx.js';
 import { mergeStatus, statusToWorkbook, siteKey } from './status.js';
 import { usageToWorkbook, orderUsage } from './usage.js';
 import { summarizeProject, summaryRows, categoryRows, currentRev } from './summary.js';
+import { buildReportXlsx, head, detailSheet, categorySheet, PALETTE } from './xlsx-report.js';
 import { COMPANY_LABEL } from './workspace.js';
 
 const safe = (s, max = 70) => String(s ?? '').replace(/[\\/:*?"<>|\r\n\t]+/g, '_').replace(/\s+/g, ' ').trim().slice(0, max) || '_';
@@ -13,25 +14,27 @@ const pad = (n, w = 3) => String(n).padStart(w, '0');
 
 const EVENT_LABEL = { create: '작업 시작', submit: '기관 업로드', revise: '수정본', decision: '누락 응답', finalize: '확정', reopen: '확정 해제', order: '취합 순서', merge: '취합', download: '다운로드' };
 
-function summaryWorkbook(projects) {
-  const wb = XLSX.utils.book_new();
-  const head = [['프로젝트', '기관', '리비전', '상태', '오류', '주의', '누락(미응답)', '현장 수']];
-  for (const p of projects) for (const s of summarizeProject(p)) head.push([p.title, s.org, `r${s.rev}/${s.revisions}`, s.status === 'finalized' ? '확정' : '진행', s.counts.error, s.counts.warn, s.openMissing, s.sites.length]);
-  XLSX.utils.book_append_sheet(wb, aoaSheet(head, [28, 14, 10, 8, 6, 6, 12, 8]), '기관별 요약');
+/** 검토요약 엑셀(서식·색 구분 포함) → Uint8Array */
+async function summaryXlsx(projects) {
+  const orgRows = [];
+  for (const p of projects) for (const s of summarizeProject(p)) orgRows.push([p.title, s.org, `r${s.rev}/${s.revisions}`, s.status === 'finalized' ? '확정' : '진행', s.counts.error, s.counts.warn, s.openMissing, s.sites.length]);
+  const org = { name: '기관별 요약', widths: [28, 14, 10, 8, 8, 8, 12, 8], rows: [head(['프로젝트', '기관', '리비전', '상태', '오류', '주의', '누락(미응답)', '현장 수']), ...orgRows.map((r) => r.map((v, i) => {
+    if (i === 4 && v > 0) return { v, bold: true, color: PALETTE.error.text, fill: PALETTE.error.strong, h: 'center' };
+    if (i === 5 && v > 0) return { v, bold: true, color: PALETTE.warn.text, fill: PALETTE.warn.strong, h: 'center' };
+    if (i === 6 && v > 0) return { v, bold: true, color: PALETTE.error.text, fill: PALETTE.error.strong, h: 'center' };
+    if (i === 3) return { v, bold: true, fill: v === '확정' ? PALETTE.info.strong : PALETTE.warn.tint, h: 'center' };
+    return typeof v === 'number' ? { v, h: 'center' } : v;
+  }))] };
   const cat = categoryRows(projects);
-  XLSX.utils.book_append_sheet(wb, aoaSheet(cat.length > 1 ? cat : [['지적 사항 없음']], [30, 8, 8, 10, 10]), '분류별 요약');
+  const catSheet = cat.length > 1 ? categorySheet('분류별 요약', cat[0], cat.slice(1), { catCol: 0, countCols: { 1: 'error', 2: 'warn' }, widths: [30, 8, 8, 10, 10] }) : { name: '분류별 요약', rows: [['지적 사항 없음']] };
   const detail = [];
   projects.forEach((p, i) => summaryRows(p, { header: i === 0 }).forEach((r) => detail.push(r)));
-  const dws = aoaSheet(detail.length > 1 ? detail : [['지적 사항 없음']], [12, 14, 34, 20, 8, 56, 60, 36, 6, 6]);
-  if (detail.length > 1) dws['!autofilter'] = { ref: `A1:J${detail.length}` };
-  XLSX.utils.book_append_sheet(wb, dws, '상세(분류별)');
-  const hist = [['일시', '작업자', '구분', '내용']];
+  const detSheet = detail.length > 1 ? detailSheet('상세(분류별)', detail[0], detail.slice(1), { catCol: 3, sevCol: 4, widths: [12, 14, 34, 20, 8, 56, 60, 36, 6, 6] }) : { name: '상세(분류별)', rows: [['지적 사항 없음']] };
+  const hist = [head(['일시', '작업자', '구분', '내용'])];
   for (const p of projects) for (const e of p.events) hist.push([e.ts, e.by, EVENT_LABEL[e.type] || e.type, e.text || '']);
-  XLSX.utils.book_append_sheet(wb, aoaSheet(hist, [24, 12, 12, 100]), '이력');
-  const dec = [['일시', '작업자', '기관', '누락 항목', '응답', '사유']];
+  const dec = [head(['일시', '작업자', '기관', '누락 항목', '응답', '사유'])];
   for (const p of projects) for (const d of p.decisions || []) dec.push([d.ts, d.by, p.submissions.find((s) => s.id === d.submissionId)?.org || '', d.key, { proceed: '사유 입력 후 진행', hold: '보류', ignore: '무시' }[d.choice], d.reason]);
-  XLSX.utils.book_append_sheet(wb, aoaSheet(dec, [24, 12, 14, 50, 16, 40]), '누락 응답');
-  return wb;
+  return buildReportXlsx([org, catSheet, detSheet, { name: '이력', rows: hist, widths: [24, 12, 12, 100] }, { name: '누락 응답', rows: dec, widths: [24, 12, 14, 50, 16, 40] }]);
 }
 
 /**
@@ -79,7 +82,7 @@ export async function buildCompanyFolder(ws, projects, zipRoot, opt = {}) {
     const buf = await ws.store.getBlob(e.hash);
     if (buf) put(`견적서/${safe(e.org)}/${safe(e.name, 120)}`, buf);
   }
-  folder.file(`검토요약_${label}_${safe(periodLabel)}.xlsx`, XLSX.write(summaryWorkbook(projects), { type: 'array', bookType: 'xlsx' }));
+  folder.file(`검토요약_${label}_${safe(periodLabel)}.xlsx`, await summaryXlsx(projects));
   files.push(`${label}/검토요약_${label}_${safe(periodLabel)}.xlsx`);
   return { files, notes, merged };
 }
@@ -98,4 +101,4 @@ export async function buildBundle(ws, groups, opt = {}) {
   return { zip: bytes, files: files.map((f) => `${safe(periodLabel)}/${f}`), notes };
 }
 
-export { summaryWorkbook };
+export { summaryXlsx };

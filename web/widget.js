@@ -32,6 +32,7 @@ import { applyPriceBook } from '../src/core/pricebook.js';
 import { CSS } from './widget-style.js';
 import { renderCategories } from './findings-view.js';
 import { groupFindings, detailRows } from '../src/core/findings-table.js';
+import { buildReportXlsx, detailSheet, categorySheet } from '../src/core/xlsx-report.js';
 
 const COMPANIES = { hyundai: ['현대건설', '품셈'], gyeryong: ['계룡건설', '단가제'], hanwha: ['한화건설', '단가제'] };
 const GRADES = ['특급기술자', '고급기술자', '중급기술자', '초급기술자'];
@@ -293,17 +294,17 @@ export function mountReview(el, opts = {}) {
   on($('export'), 'click', async () => {
     if (!st.last) return;
     await ensureXlsx(o.assetBase);
-    const X = globalThis.XLSX, wb = X.utils.book_new();
-    const sheet = (aoa, widths, filter) => { const ws = X.utils.aoa_to_sheet(aoa); ws['!cols'] = widths.map((w) => ({ wch: w })); if (filter && aoa.length > 1) ws['!autofilter'] = { ref: `A1:${String.fromCharCode(64 + widths.length)}${aoa.length}` }; return ws; };
-    const sum = [['구분', '분류', '오류', '주의', '참고']], det = [['구분', '분류', '심각도', '내용', '사유·상세', '위치·파일', '곳수']];
+    const sum = [], det = [];
     for (const [k, title] of GROUPS) {
       const list = st.last[k] || [];
       for (const c of groupFindings(list)) sum.push([title, c.category, c.error, c.warn, c.info]);
       det.push(...detailRows(list, [title]));
     }
-    X.utils.book_append_sheet(wb, sheet(sum.length > 1 ? sum : [['지적 사항 없음']], [26, 24, 8, 8, 8]), '분류별 요약');
-    X.utils.book_append_sheet(wb, sheet(det.length > 1 ? det : [['지적 사항 없음']], [26, 20, 8, 60, 60, 38, 6], true), '검토결과(분류별)');
-    X.writeFile(wb, `검토결과_${new Date().toISOString().slice(0, 10)}.xlsx`);
+    const bytes = await buildReportXlsx([
+      sum.length ? categorySheet('분류별 요약', ['구분', '분류', '오류', '주의', '참고'], sum, { catCol: 1, countCols: { 2: 'error', 3: 'warn', 4: 'info' }, widths: [26, 24, 8, 8, 8] }) : { name: '분류별 요약', rows: [['지적 사항 없음']] },
+      det.length ? detailSheet('검토결과(분류별)', ['구분', '분류', '심각도', '내용', '사유·상세', '위치·파일', '곳수'], det, { catCol: 1, sevCol: 2, widths: [26, 20, 8, 60, 60, 38, 6] }) : { name: '검토결과(분류별)', rows: [['지적 사항 없음']] },
+    ]);
+    const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })); a.download = `검토결과_${new Date().toISOString().slice(0, 10)}.xlsx`; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 4000);
   });
 
   // ── 기준 관리
