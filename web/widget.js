@@ -271,6 +271,18 @@ export function mountReview(el, opts = {}) {
   on($('run'), 'click', run);
 
   // ── 결과 표시
+  // 긴 문장을 읽기 쉽게: 첫 문장은 굵게, ' — ' 뒤의 사유와 '(함께 묶인 인자: …)'·'원인:' 은 줄을 바꿔 작게 보여 준다
+  const fmtMsg = (m) => {
+    const [head, ...rest] = String(m).split(' — ');
+    const sub = rest.join(' — ').split(/ \/ (?=\[)/).map((x) => x.trim()).filter(Boolean);
+    const line = (t) => { // '(함께 묶인 인자: …)' 는 괄호가 중첩될 수 있어 짝을 세어 잘라 낸다
+      const tag = '(함께 묶인 인자: ', i = t.indexOf(tag); if (i < 0) return esc(t);
+      let d = 1, j = i + tag.length; for (; j < t.length && d; j++) d += t[j] === '(' ? 1 : t[j] === ')' ? -1 : 0;
+      return `${esc(t.slice(0, i))}<br><span class="qr-sub2">함께 묶인 인자: ${esc(t.slice(i + tag.length, j - 1))}</span>${esc(t.slice(j))}`;
+    };
+    const hm = line(head).split(/(?<=\S) \/ (?=\[)/);
+    return `<b>${hm.join('<br>')}</b>${sub.length ? `<div class="qr-sub">${sub.map((x) => `<div>${line(x).replace(/^원인: /, '<span class="qr-badge info">원인</span> ')}</div>`).join('')}</div>` : ''}`;
+  };
   function render() {
     const r = st.last; if (!r) return;
     const showInfo = $('show-info').checked;
@@ -282,8 +294,22 @@ export function mountReview(el, opts = {}) {
       const raw = r[k] || []; if (!raw.length) return '';
       const list = raw.filter((f) => showInfo || f.severity !== 'info').sort((a, b) => ORDER[a.severity] - ORDER[b.severity]);
       const e = raw.filter((f) => f.severity === 'error').length, w = raw.filter((f) => f.severity === 'warn').length;
-      const rows = list.map((f) => `<tr><td class="sev"><span class="qr-badge ${f.severity}">${SEV[f.severity]}</span></td><td class="cat">${esc(f.category)}</td><td>${esc(f.message)}${f.file ? `<div class="where">${esc(f.file)}</div>` : ''}</td><td class="where">${esc(f.where)}</td></tr>`).join('');
-      return `<details class="qr-grp" ${e || w ? 'open' : ''}><summary><h3>${title}</h3>${e ? `<span class="qr-badge error">오류 ${e}</span>` : ''}${w ? `<span class="qr-badge warn">주의 ${w}</span>` : ''}${!e && !w ? '<span class="qr-badge info">이상 없음</span>' : ''}</summary><div class="qr-body"><table><thead><tr><th></th><th>구분</th><th>내용</th><th>위치</th></tr></thead><tbody>${rows || '<tr><td colspan="4" class="qr-mute">표시할 항목이 없습니다.</td></tr>'}</tbody></table></div></details>`;
+      // 같은 분류끼리 묶고, 같은 내용은 한 줄로 합쳐 (위치만 여러 개) 보여 준다. 분류는 오류가 많은 순.
+      const cats = new Map();
+      for (const f of list) {
+        if (!cats.has(f.category)) cats.set(f.category, new Map());
+        const m = cats.get(f.category), key = f.severity + '|' + f.message;
+        if (!m.has(key)) m.set(key, { ...f, spots: [] });
+        const spot = [f.where, f.file].filter(Boolean).join(' · '); if (spot) m.get(key).spots.push(spot);
+      }
+      const catList = [...cats].map(([name, items]) => {
+        const its = [...items.values()];
+        return { name, its, e: its.filter((x) => x.severity === 'error').length, w: its.filter((x) => x.severity === 'warn').length };
+      }).sort((x, y) => (y.e - x.e) || (y.w - x.w) || x.name.localeCompare(y.name, 'ko'));
+      const body = catList.map((c) => `<section class="qr-cat"><header><b>${esc(c.name)}</b>${c.e ? `<span class="qr-badge error">오류 ${c.e}</span>` : ''}${c.w ? `<span class="qr-badge warn">주의 ${c.w}</span>` : ''}${!c.e && !c.w ? `<span class="qr-badge info">참고 ${c.its.length}</span>` : ''}</header>
+        <ol class="qr-items">${c.its.map((x) => `<li class="${x.severity}"><span class="qr-badge ${x.severity}">${SEV[x.severity]}</span><div><div class="qr-msg-txt">${fmtMsg(x.message)}${x.spots.length > 1 ? ` <span class="qr-mute">(${x.spots.length}곳)</span>` : ''}</div>${x.spots.length ? `<div class="where">${[...new Set(x.spots)].slice(0, 6).map(esc).join('<br>')}${new Set(x.spots).size > 6 ? `<br>외 ${new Set(x.spots).size - 6}곳` : ''}</div>` : ''}</div></li>`).join('')}</ol></section>`).join('');
+      const chips = catList.length > 1 ? `<div class="qr-catchips">${catList.map((c) => `<span class="qr-chip2 ${c.e ? 'error' : c.w ? 'warn' : 'info'}">${esc(c.name)} ${c.e + c.w || c.its.length}</span>`).join('')}</div>` : '';
+      return `<details class="qr-grp" ${e || w ? 'open' : ''}><summary><h3>${title}</h3>${e ? `<span class="qr-badge error">오류 ${e}</span>` : ''}${w ? `<span class="qr-badge warn">주의 ${w}</span>` : ''}${!e && !w ? '<span class="qr-badge info">이상 없음</span>' : ''}</summary><div class="qr-body">${chips}${body || '<div class="qr-mute" style="padding:8px">표시할 항목이 없습니다.</div>'}</div></details>`;
     }).join('');
     $('out').hidden = false;
   }
