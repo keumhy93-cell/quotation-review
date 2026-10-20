@@ -9,6 +9,7 @@ import { usageToWorkbook } from '../src/core/usage.js';
 import { XLSX } from '../src/core/xlsx.js';
 import { IdbStore, HttpStore, MemoryStore, FsStore, loadFolderHandle, folderPermission } from '../src/store/index.js';
 import { ROLES } from '../src/core/batch.js';
+import { renderCategories } from './findings-view.js';
 
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const SEV = { error: '오류', warn: '주의', info: '참고' };
@@ -125,14 +126,15 @@ export function mountWorkspace(root, { ws, store, onChange }) {
       <div class="qr-row"><button class="primary" data-act="submit" ${ui.pending.length ? '' : 'disabled'}>업로드하고 검토</button><span class="qr-msg ${ui.msgKind}" data-w="msg">${esc(ui.msg)}</span></div></div>`;
   }
 
+  const siteDetail = (site) => renderCategories(site.categories.flatMap((c) => c.messages.map((m) => ({ ...m, category: c.category }))), { chips: false }).body;
   function renderErrorSummary(p, sums) {
     if (!sums.length) return '';
     const rows = sums.map((s) => {
       const open = ui.open.has(s.submissionId);
       const cats = s.sites.flatMap((x) => x.categories.map((c) => ({ ...c, site: x.site }))).sort((a, b) => b.error - a.error).slice(0, 3).map((c) => `${esc(c.category)}(${c.error + c.warn})`).join(', ');
       const detail = open ? `<tr><td colspan="7">${s.sites.map((site) => `<div class="qr-site"><b>${esc(site.site)}</b> ${site.error ? `<span class="qr-badge error">오류 ${site.error}</span>` : ''} ${site.warn ? `<span class="qr-badge warn">주의 ${site.warn}</span>` : ''}
-        <ul>${site.categories.map((c) => `<li><b>${esc(c.category)}</b> — ${c.messages.slice(0, 4).map((m) => `<span class="qr-badge ${m.severity}">${SEV[m.severity]}</span> ${esc(m.message)}${m.where ? ` <small>(${esc(m.where)})</small>` : ''}`).join('<br>')}${c.messages.length > 4 ? `<br><small>외 ${c.messages.length - 4}건</small>` : ''}</li>`).join('')}</ul></div>`).join('') || '<span class="qr-mute">오류·주의가 없습니다.</span>'}
-        ${s.missing.length ? `<div class="qr-site"><b>누락</b><ul>${s.missing.map((m) => `<li><span class="qr-badge warn">${esc(m.kind)}</span> ${esc(m.site)} <small>${esc(m.detail)}</small> ${m.decided ? '<span class="qr-badge info">응답함</span>' : '<span class="qr-badge error">미응답</span>'}</li>`).join('')}</ul></div>` : ''}</td></tr>` : '';
+        ${siteDetail(site)}</div>`).join('') || '<span class="qr-mute">오류·주의가 없습니다.</span>'}
+        ${s.missing.length ? `<section class="qr-cat"><header><b>누락</b><span class="${s.openMissing ? 'qr-badge error' : 'qr-badge warn'}">${s.missing.length}건${s.openMissing ? ` · 미응답 ${s.openMissing}` : ''}</span></header><ol class="qr-items">${s.missing.map((m) => `<li class="${m.decided ? 'info' : 'warn'}"><span class="qr-badge warn">${esc(m.kind)}</span><div><div class="qr-msg-txt"><b>${esc(m.site)}</b></div><div class="where">${esc(m.detail)}</div></div>${m.decided ? '<span class="qr-badge info" style="margin-left:auto">응답함</span>' : '<span class="qr-badge error" style="margin-left:auto">미응답</span>'}</li>`).join('')}</ol></section>` : ''}</td></tr>` : '';
       return `<tr><td><b>${esc(s.org)}</b></td><td>${s.counts.error ? `<span class="qr-badge error">오류 ${s.counts.error}</span>` : '<span class="qr-badge info">오류 0</span>'}</td><td>${s.counts.warn ? `<span class="qr-badge warn">주의 ${s.counts.warn}</span>` : '0'}</td><td>${s.missing.length ? `<span class="qr-badge ${s.openMissing ? 'error' : 'warn'}">누락 ${s.missing.length}${s.openMissing ? ` (미응답 ${s.openMissing})` : ''}</span>` : '0'}</td><td class="qr-mute">${cats || '-'}</td><td>${s.sites.length}현장</td><td><button data-act="toggle-sum" data-id="${esc(s.submissionId)}">${open ? '접기' : '자세히'}</button></td></tr>${detail}`;
     }).join('');
     const tot = sums.reduce((a, s) => ({ e: a.e + s.counts.error, w: a.w + s.counts.warn, m: a.m + s.openMissing }), { e: 0, w: 0, m: 0 });
