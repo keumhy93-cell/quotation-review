@@ -10,6 +10,7 @@ import { XLSX } from '../src/core/xlsx.js';
 import { IdbStore, HttpStore, MemoryStore, FsStore, loadFolderHandle, folderPermission } from '../src/store/index.js';
 import { ROLES } from '../src/core/batch.js';
 import { renderCategories } from './findings-view.js';
+import { buildUsageAuditXlsx } from '../src/core/usage-audit.js';
 
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const SEV = { error: '오류', warn: '주의', info: '참고' };
@@ -73,7 +74,7 @@ export async function pickStore(opts = {}) {
 }
 
 export function mountWorkspace(root, { ws, store, onChange }) {
-  const ui = { company: 'hyundai', period: '', mode: 'quarter', project: null, pending: [], busy: false, open: new Set(), recent: [], msg: '', msgKind: '', skipDup: false, selectedHalf: new Set(), includeEstimates: true, preview: null, tab: 'upload' };
+  const ui = { company: 'hyundai', period: '', mode: 'quarter', project: null, pending: [], busy: false, open: new Set(), recent: [], msg: '', msgKind: '', skipDup: false, selectedHalf: new Set(), auditOff: new Set(), includeEstimates: true, preview: null, tab: 'upload' };
   const userName = () => ws.user;
 
   const $ = (sel) => root.querySelector(sel);
@@ -157,6 +158,7 @@ export function mountWorkspace(root, { ws, store, onChange }) {
       <input type="file" multiple data-w="revfiles" accept=".xlsx,.xlsm,.xls,.pdf" hidden></div>`;
   }
 
+  const auditProjects = (p) => [{ id: p.id, period: p.period, company: p.company }, ...(ui.recent || []).filter((x) => x.company === p.company && x.id !== p.id)].sort((a, b) => String(a.period).localeCompare(String(b.period)));
   function renderAssemble(p) {
     const order = [...new Set([...(p.statusOrder || []), ...p.submissions.map((s) => s.id)])].filter((id) => p.submissions.some((s) => s.id === id));
     let merged; try { merged = ws.buildStatus(p, { skipDuplicates: ui.skipDup }).merged; } catch (e) { merged = { ok: false, sites: [], findings: [], duplicates: [] }; }
@@ -176,7 +178,10 @@ export function mountWorkspace(root, { ws, store, onChange }) {
       <div class="qr-row"><label class="qr-chk"><input type="checkbox" data-w="inc-est" ${ui.includeEstimates ? 'checked' : ''}> 견적서 원본 포함</label></div>
       ${halfOpts ? `<div class="qr-row"><span class="qr-mute">반기 병합(이전 분기 포함):</span> ${halfOpts} <label>반기 이름 <input type="text" data-w="halfname" placeholder="예: 2026-상반기" value="${esc(ui.halfName ?? '')}"></label></div>` : ''}
       ${others ? `<div class="qr-row"><span class="qr-mute">같은 기간의 다른 건설사도 함께:</span> ${others}</div>` : ''}
-      <div class="qr-row"><button class="primary" data-act="dl-zip">최종 ZIP 다운로드</button></div></div>`;
+      <div class="qr-row"><button class="primary" data-act="dl-zip">최종 ZIP 다운로드</button></div></div>
+    <div class="qr-card"><h2>결과서 사용실태 비고 점검표 <small>엑셀 1개로: ① 화학물질 사용실태 비고 ↔ 대상유해인자 불일치와 사유 ② 임시·단시간·허용소비량의 주기(주 n회·월 n회)·면적 기재 여부</small></h2>
+      <div class="qr-row"><span class="qr-mute">점검할 작업(같은 건설사):</span> ${auditProjects(p).map((x) => `<label class="qr-chk"><input type="checkbox" data-w="audit" value="${esc(x.id)}" ${ui.auditOff.has(x.id) ? '' : 'checked'}> ${esc(x.period)}</label>`).join(' ')}</div>
+      <div class="qr-row"><button class="primary" data-act="dl-audit">점검표 엑셀 만들기</button><span class="qr-mute">올려 둔 결과서(PDF)를 모두 읽어 점검합니다. 엑셀 결과서는 제외됩니다.</span></div><div class="qr-msg ${ui.msgKind}" data-w="msg">${esc(ui.msg)}</div></div>`;
   }
 
   function renderHistory(p) {
@@ -370,6 +375,13 @@ export function mountWorkspace(root, { ws, store, onChange }) {
       else if (act === 'dl-status') await busy('실시현황 만드는 중', async () => { const { merged } = ws.buildStatus(ui.project, statusOpts()); download(XLSX.write(statusToWorkbook(merged), { type: 'array', bookType: 'xlsx' }), `실시현황_${COMPANY_LABEL[ui.project.company]}_${ui.project.period}.xlsx`); await recordDownload('취합 실시현황 xlsx'); });
       else if (act === 'dl-usage') await busy('사용실태 만드는 중', async () => { const a = ws.assemble(ui.project, statusOpts()); download(XLSX.write(usageToWorkbook(a.usage, `${COMPANY_LABEL[ui.project.company]} ${ui.project.period} 사용실태 취합`), { type: 'array', bookType: 'xlsx' }), `사용실태_${COMPANY_LABEL[ui.project.company]}_${ui.project.period}.xlsx`); await recordDownload('취합 사용실태 xlsx'); });
       else if (act === 'dl-zip') await doZip();
+      else if (act === 'dl-audit') await busy('사용실태 비고 점검 중', async () => {
+        const ids = [...root.querySelectorAll('[data-w="audit"]:checked')].map((x) => x.value); if (!ids.length) throw new Error('점검할 작업을 하나 이상 선택하세요.');
+        const projs = (await Promise.all(ids.map((id) => store.getProject(id)))).filter(Boolean).sort((a, b) => String(a.period).localeCompare(String(b.period)));
+        const r = await buildUsageAuditXlsx(ws, projs, ws.cfg);
+        download(r.bytes, `사용실태비고점검_${COMPANY_LABEL[ui.project.company]}_${projs.map((x) => x.period).join('+')}.xlsx`);
+        toast(`점검표를 내려받았습니다 — ① 불일치 ${r.mism.length}건(오류 ${r.mism.filter((x) => x.verdict === '오류').length}) · ② 임시·단시간 ${r.temps.length}건(오류·주의 ${r.temps.filter((x) => x.verdict !== '확인됨').length})${r.skipped.length ? ` · 점검 못한 파일 ${r.skipped.length}개(요약 시트 참고)` : ''}`, 'ok');
+      });
     } catch (e) { console.error(e); toast('오류: ' + (e?.message || e), 'err'); }
   });
   root.addEventListener('change', async (ev) => {
@@ -378,6 +390,7 @@ export function mountWorkspace(root, { ws, store, onChange }) {
     else if (t.matches('[data-w="revfiles"]')) { if (t.files.length) await doRevise(t.dataset.sub, [...t.files]); }
     else if (t.matches('[data-w="skipdup"]')) { ui.skipDup = t.checked; render(); }
     else if (t.matches('[data-w="inc-est"]')) ui.includeEstimates = t.checked;
+    else if (t.matches('[data-w="audit"]')) { t.checked ? ui.auditOff.delete(t.value) : ui.auditOff.add(t.value); }
     else if (t.matches('[data-w="half"]')) { t.checked ? ui.selectedHalf.add(t.value) : ui.selectedHalf.delete(t.value); }
     else if (t.matches('[data-w="mode"]')) ui.mode = t.value;
     else if (t.matches('[data-w="user"]')) { ws.setUser(t.value.trim()); try { localStorage.setItem('qr-user', t.value.trim()); } catch { /* 무시 */ } }

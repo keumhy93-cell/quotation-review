@@ -74,7 +74,7 @@ const catColor = () => { const m = new Map(); return (name) => { if (!m.has(name
  * 행 바탕은 심각도 색(연하게), 분류 칸은 분류마다 다른 색, 심각도 칸은 진한 색.
  */
 export function detailSheet(name, headers, rows, { catCol, sevCol, widths }) {
-  const color = catColor(), sevKey = { 오류: 'error', 주의: 'warn', 참고: 'info', 누락: 'warn' };
+  const color = catColor(), sevKey = { 오류: 'error', 주의: 'warn', 참고: 'info', 누락: 'warn', 확인됨: 'info', 정상: 'info' };
   const body = rows.map((r) => {
     const k = sevKey[r[sevCol]] || 'info', P = PALETTE[k];
     return r.map((v, i) => {

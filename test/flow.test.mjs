@@ -264,3 +264,36 @@ test('엑셀 분류별 정리: 같은 분류끼리 묶고(오류 많은 순), �
   const dup = rows.find((r) => r[1] === '다성분');
   assert.equal(dup[6], 2); assert.equal(dup[5], '23행 · a.xlsx\n59행 · a.xlsx'); assert.match(dup[4], /함께 묶인 인자: 산화철분진과흄/);
 });
+
+test('사용실태 점검표: 비고↔대상유해인자 불일치(사유별 판정)와 임시·단시간·허용소비량의 주기·면적 기재 여부', async () => {
+  const { auditResult } = await import('../src/core/usage-audit.js');
+  const row = (dept, text) => ({ dept, text });
+  const res = {
+    file: 'r.pdf', cover: { site: '현대건설 가 현장' },
+    summary: [{ hazard: '소음' }, { hazard: '기타광물성분진' }, { hazard: '톨루엔' }],
+    plan: [{ dept: '도장', hazard: '톨루엔' }, { dept: '도장', hazard: '소음', physical: true }],
+    distribution: [{ label: '도장', hazards: ['톨루엔'], text: '크실렌은 소량 사용으로 측정 제외' }],
+    usageRows: [
+      row('도장', '신나 A 사용 희석용 5 kg 아세톤 임시 단시간 허용소비량 이하 월 2회 사용, 작업면적 30㎡'),
+      row('도장', '신나 B 사용 희석용 3 kg 메틸에틸케톤 임시 단시간 허용소비량 이하'),
+      row('도장', '신나 C 사용 희석용 1 kg 크실렌 사용'),
+      row('도장', '신나 D 사용 희석용 2 kg 톨루엔 사용'),
+      row('도장', '신나 E 사용 희석용 2 kg 에틸벤젠 사용'),
+    ],
+  };
+  const cfg = { hazardAliases: { 아세톤: '아세톤', 메틸에틸케톤: '메틸에틸케톤', 크실렌: '크실렌', 톨루엔: '톨루엔', 에틸벤젠: '에틸벤젠' } };
+  const { mism, temps } = auditResult(res, '', cfg, { period: '2026-3분기', org: '의정부센터' });
+  const v = (h) => mism.find((x) => x.hazard === h);
+  assert.equal(v('아세톤').verdict, '확인됨'); assert.match(v('아세톤').reason, /사용 주기가 비고에 기재/);
+  assert.equal(v('메틸에틸케톤').verdict, '오류'); assert.match(v('메틸에틸케톤').reason, /사용 주기\(주 n회·월 n회\)가 적혀 있지 않고/);
+  assert.equal(v('크실렌').verdict, '확인됨'); assert.match(v('크실렌').reason, /분포실태에 해당 유해인자와 사유/);
+  assert.equal(v('에틸벤젠').verdict, '주의'); assert.match(v('에틸벤젠').reason, /이 유해인자가 언급되어 있지 않습니다/); // 분포실태에 사유 문구는 있으나 다른 물질(크실렌) 이야기
+  res.distribution = [{ label: '도장', hazards: ['톨루엔'], text: '신나 사용' }];
+  assert.equal(auditResult(res, '', cfg).mism.find((x) => x.hazard === '에틸벤젠').verdict, '오류');
+  assert.equal(v('톨루엔'), undefined); // 대상유해인자·측정계획에 있어 불일치 아님
+  assert.ok(mism.every((x) => x.period === '2026-3분기' && x.org === '의정부센터' && x.site === '현대건설 가 현장'));
+  assert.equal(temps.length, 2);
+  const a = temps.find((x) => /아세톤/.test(x.note)), b = temps.find((x) => /메틸에틸케톤/.test(x.note));
+  assert.deepEqual([a.freq, a.area, a.verdict], ['기재', '기재', '확인됨']); assert.match(a.freqEv, /월 2회/); assert.match(a.areaEv, /30㎡/);
+  assert.deepEqual([b.freq, b.area, b.verdict], ['미기재', '미기재', '오류']); assert.match(b.reason, /주기.*면적/);
+});
